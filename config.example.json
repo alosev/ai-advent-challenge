@@ -1,0 +1,6 @@
+{
+  "api_key": "paste_your_DeepSeek_API_key_here",
+  "base_url": "https://api.deepseek.com",
+  "model": "deepseek-flash",
+  "timeout_seconds": 60
+}
