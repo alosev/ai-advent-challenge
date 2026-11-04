@@ -26,7 +26,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	client := llm.NewOpenAICompatibleClient(cfg.BaseURL, cfg.APIKey, cfg.Model, cfg.Timeout)
+	options := llm.CompletionOptions{
+		MaxTokens:     cfg.MaxTokens,
+		StopSequences: cfg.StopSequences,
+	}
+	if len(cfg.ResponseSchema) > 0 {
+		options.ResponseSchema = &llm.ResponseSchema{
+			Schema: cfg.ResponseSchema,
+		}
+	}
+	client := llm.NewOpenAICompatibleClient(cfg.BaseURL, cfg.APIKey, cfg.Model, cfg.Timeout, options)
 	chat := app.NewChatService(client)
 
 	prompt, err := readPrompt(os.Stdin, promptArgs)

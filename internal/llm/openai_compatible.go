@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -16,23 +17,52 @@ type OpenAICompatibleClient struct {
 	baseURL    string
 	apiKey     string
 	model      string
+	options    CompletionOptions
 	httpClient *http.Client
 }
 
-func NewOpenAICompatibleClient(baseURL, apiKey, model string, timeout time.Duration) *OpenAICompatibleClient {
+// CompletionOptions contains optional controls supported by the OpenAI chat
+// completions API.
+type CompletionOptions struct {
+	MaxTokens      int
+	StopSequences  []string
+	ResponseSchema *ResponseSchema
+}
+
+// ResponseSchema describes the desired JSON response.
+type ResponseSchema struct {
+	Schema json.RawMessage
+}
+
+func NewOpenAICompatibleClient(baseURL, apiKey, model string, timeout time.Duration, options CompletionOptions) *OpenAICompatibleClient {
 	return &OpenAICompatibleClient{
 		baseURL:    strings.TrimRight(baseURL, "/"),
 		apiKey:     apiKey,
 		model:      model,
+		options:    options,
 		httpClient: &http.Client{Timeout: timeout},
 	}
 }
 
 func (c *OpenAICompatibleClient) Complete(ctx context.Context, messages []Message) (string, error) {
+	requestMessages := messages
+	if c.options.ResponseSchema != nil {
+		requestMessages = append([]Message{jsonSchemaInstruction(c.options.ResponseSchema.Schema)}, messages...)
+	}
+
 	payload, err := json.Marshal(struct {
-		Model    string    `json:"model"`
-		Messages []Message `json:"messages"`
-	}{c.model, messages})
+		Model          string          `json:"model"`
+		Messages       []Message       `json:"messages"`
+		MaxTokens      int             `json:"max_tokens,omitempty"`
+		StopSequences  []string        `json:"stop,omitempty"`
+		ResponseFormat *responseFormat `json:"response_format,omitempty"`
+	}{
+		Model:          c.model,
+		Messages:       requestMessages,
+		MaxTokens:      c.options.MaxTokens,
+		StopSequences:  c.options.StopSequences,
+		ResponseFormat: newResponseFormat(c.options.ResponseSchema),
+	})
 	if err != nil {
 		return "", fmt.Errorf("encode request: %w", err)
 	}
@@ -67,7 +97,26 @@ func (c *OpenAICompatibleClient) Complete(ctx context.Context, messages []Messag
 		return "", fmt.Errorf("decode response: %w", err)
 	}
 	if len(result.Choices) == 0 || strings.TrimSpace(result.Choices[0].Message.Content) == "" {
+		log.Printf("LLM API returned an empty answer; response body: %s", string(body))
 		return "", fmt.Errorf("API returned an empty answer")
 	}
 	return result.Choices[0].Message.Content, nil
+}
+
+type responseFormat struct {
+	Type string `json:"type"`
+}
+
+func newResponseFormat(schema *ResponseSchema) *responseFormat {
+	if schema == nil {
+		return nil
+	}
+	return &responseFormat{Type: "json_object"}
+}
+
+func jsonSchemaInstruction(schema json.RawMessage) Message {
+	return Message{
+		Role:    "system",
+		Content: "Return only a valid JSON object that conforms to this JSON Schema: " + string(schema),
+	}
 }
