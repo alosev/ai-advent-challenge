@@ -18,10 +18,10 @@ func NewChatService(client llm.Client) *ChatService {
 	return &ChatService{client: client}
 }
 
-func (s *ChatService) Ask(ctx context.Context, prompt string) (string, error) {
+func (s *ChatService) Ask(ctx context.Context, prompt string) (llm.Result, error) {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
-		return "", fmt.Errorf("prompt must not be empty")
+		return llm.Result{}, fmt.Errorf("prompt must not be empty")
 	}
 	return s.client.Complete(ctx, []llm.Message{{Role: "user", Content: prompt}})
 }

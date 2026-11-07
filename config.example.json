@@ -4,6 +4,7 @@
   "model": "deepseek-flash",
   "timeout_seconds": 60,
   "max_tokens": 500,
+  "reasoning_effort": "",
   "stop_sequences": ["\n<END_OF_RESPONSE>"],
   "response_schema": {
     "type": "object",

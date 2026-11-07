@@ -18,14 +18,15 @@ const (
 // Config contains runtime settings. Keeping it independent from the UI makes it
 // reusable by a CLI, desktop application, or HTTP server.
 type Config struct {
-	APIKey         string          `json:"api_key"`
-	BaseURL        string          `json:"base_url"`
-	Model          string          `json:"model"`
-	TimeoutSeconds int             `json:"timeout_seconds"`
-	MaxTokens      int             `json:"max_tokens"`
-	StopSequences  []string        `json:"stop_sequences"`
-	ResponseSchema json.RawMessage `json:"response_schema"`
-	Timeout        time.Duration   `json:"-"`
+	APIKey          string          `json:"api_key"`
+	BaseURL         string          `json:"base_url"`
+	Model           string          `json:"model"`
+	TimeoutSeconds  int             `json:"timeout_seconds"`
+	MaxTokens       int             `json:"max_tokens"`
+	ReasoningEffort string          `json:"reasoning_effort"`
+	StopSequences   []string        `json:"stop_sequences"`
+	ResponseSchema  json.RawMessage `json:"response_schema"`
+	Timeout         time.Duration   `json:"-"`
 }
 
 // Load reads application settings from a JSON file only.
@@ -75,6 +76,7 @@ func normalize(cfg *Config) {
 	cfg.APIKey = strings.TrimSpace(cfg.APIKey)
 	cfg.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
 	cfg.Model = strings.TrimSpace(cfg.Model)
+	cfg.ReasoningEffort = strings.TrimSpace(cfg.ReasoningEffort)
 	stopSequences := cfg.StopSequences[:0]
 	for _, sequence := range cfg.StopSequences {
 		if sequence = strings.TrimSpace(sequence); sequence != "" {

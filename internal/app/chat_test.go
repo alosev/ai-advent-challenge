@@ -9,9 +9,9 @@ import (
 
 type fakeClient struct{ messages []llm.Message }
 
-func (f *fakeClient) Complete(_ context.Context, messages []llm.Message) (string, error) {
+func (f *fakeClient) Complete(_ context.Context, messages []llm.Message) (llm.Result, error) {
 	f.messages = messages
-	return "answer", nil
+	return llm.Result{Content: "answer"}, nil
 }
 
 func TestAskSendsUserPrompt(t *testing.T) {
@@ -22,7 +22,7 @@ func TestAskSendsUserPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if answer != "answer" || len(fake.messages) != 1 || fake.messages[0].Content != "Hello" {
-		t.Fatalf("unexpected result: answer=%q messages=%#v", answer, fake.messages)
+	if answer.Content != "answer" || len(fake.messages) != 1 || fake.messages[0].Content != "Hello" {
+		t.Fatalf("unexpected result: answer=%v messages=%#v", answer, fake.messages)
 	}
 }

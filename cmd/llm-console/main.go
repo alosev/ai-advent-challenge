@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -27,8 +26,9 @@ func main() {
 	}
 
 	options := llm.CompletionOptions{
-		MaxTokens:     cfg.MaxTokens,
-		StopSequences: cfg.StopSequences,
+		MaxTokens:       cfg.MaxTokens,
+		ReasoningEffort: cfg.ReasoningEffort,
+		StopSequences:   cfg.StopSequences,
 	}
 	if len(cfg.ResponseSchema) > 0 {
 		options.ResponseSchema = &llm.ResponseSchema{
@@ -49,7 +49,12 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Ошибка запроса к LLM:", err)
 		os.Exit(1)
 	}
-	fmt.Println(answer)
+	fmt.Println(answer.Content)
+	if answer.Usage != nil {
+		fmt.Fprintf(os.Stderr, "Токены: всего %d (вход: %d, выход: %d)\n", answer.Usage.TotalTokens, answer.Usage.PromptTokens, answer.Usage.CompletionTokens)
+	} else {
+		fmt.Fprintln(os.Stderr, "Данные о расходе токенов недоступны")
+	}
 }
 
 func parseArgs(args []string) (configPath string, promptArgs []string, err error) {
@@ -69,15 +74,19 @@ func parseArgs(args []string) (configPath string, promptArgs []string, err error
 
 func readPrompt(in io.Reader, args []string) (string, error) {
 	if len(args) > 0 {
-		return strings.TrimSpace(strings.Join(args, " ")), nil
+		prompt := strings.TrimSpace(strings.Join(args, " "))
+		if prompt == "" {
+			return "", fmt.Errorf("запрос не должен быть пустым")
+		}
+		return prompt, nil
 	}
 
-	fmt.Print("Ваш вопрос: ")
-	line, err := bufio.NewReader(in).ReadString('\n')
-	if err != nil && len(line) == 0 {
+	fmt.Fprintln(os.Stderr, "Введите запрос. Для отправки нажмите Ctrl+D на новой строке (Windows: Ctrl+Z, затем Enter):")
+	data, err := io.ReadAll(in)
+	if err != nil {
 		return "", err
 	}
-	prompt := strings.TrimSpace(line)
+	prompt := strings.TrimSpace(string(data))
 	if prompt == "" {
 		return "", fmt.Errorf("запрос не должен быть пустым")
 	}
