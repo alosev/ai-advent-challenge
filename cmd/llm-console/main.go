@@ -27,6 +27,8 @@ func main() {
 
 	options := llm.CompletionOptions{
 		MaxTokens:       cfg.MaxTokens,
+		Temperature:     cfg.Temperature,
+		Thinking:        cfg.Thinking,
 		ReasoningEffort: cfg.ReasoningEffort,
 		StopSequences:   cfg.StopSequences,
 	}

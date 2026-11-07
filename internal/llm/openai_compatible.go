@@ -25,6 +25,8 @@ type OpenAICompatibleClient struct {
 // completions API.
 type CompletionOptions struct {
 	MaxTokens       int
+	Temperature     *float64
+	Thinking        string
 	ReasoningEffort string
 	StopSequences   []string
 	ResponseSchema  *ResponseSchema
@@ -55,6 +57,8 @@ func (c *OpenAICompatibleClient) Complete(ctx context.Context, messages []Messag
 		Model           string          `json:"model"`
 		Messages        []Message       `json:"messages"`
 		MaxTokens       int             `json:"max_tokens,omitempty"`
+		Temperature     *float64        `json:"temperature,omitempty"`
+		Thinking        *thinkingOption `json:"thinking,omitempty"`
 		ReasoningEffort string          `json:"reasoning_effort,omitempty"`
 		StopSequences   []string        `json:"stop,omitempty"`
 		ResponseFormat  *responseFormat `json:"response_format,omitempty"`
@@ -62,6 +66,8 @@ func (c *OpenAICompatibleClient) Complete(ctx context.Context, messages []Messag
 		Model:           c.model,
 		Messages:        requestMessages,
 		MaxTokens:       c.options.MaxTokens,
+		Temperature:     c.options.Temperature,
+		Thinking:        newThinkingOption(c.options.Thinking),
 		ReasoningEffort: c.options.ReasoningEffort,
 		StopSequences:   c.options.StopSequences,
 		ResponseFormat:  newResponseFormat(c.options.ResponseSchema),
@@ -105,6 +111,17 @@ func (c *OpenAICompatibleClient) Complete(ctx context.Context, messages []Messag
 		return Result{}, fmt.Errorf("API returned an empty answer")
 	}
 	return Result{Content: result.Choices[0].Message.Content, Usage: result.Usage}, nil
+}
+
+type thinkingOption struct {
+	Type string `json:"type"`
+}
+
+func newThinkingOption(value string) *thinkingOption {
+	if value == "" {
+		return nil
+	}
+	return &thinkingOption{Type: value}
 }
 
 type responseFormat struct {

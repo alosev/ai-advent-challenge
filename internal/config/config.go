@@ -23,6 +23,8 @@ type Config struct {
 	Model           string          `json:"model"`
 	TimeoutSeconds  int             `json:"timeout_seconds"`
 	MaxTokens       int             `json:"max_tokens"`
+	Temperature     *float64        `json:"temperature"`
+	Thinking        string          `json:"thinking"`
 	ReasoningEffort string          `json:"reasoning_effort"`
 	StopSequences   []string        `json:"stop_sequences"`
 	ResponseSchema  json.RawMessage `json:"response_schema"`
@@ -44,6 +46,12 @@ func Load(path string) (Config, error) {
 	}
 	if cfg.MaxTokens < 0 {
 		return Config{}, fmt.Errorf("max_tokens не может быть отрицательным")
+	}
+	if cfg.Temperature != nil && (*cfg.Temperature < 0 || *cfg.Temperature > 2) {
+		return Config{}, fmt.Errorf("temperature должна быть в диапазоне от 0 до 2")
+	}
+	if cfg.Thinking != "" && cfg.Thinking != "enabled" && cfg.Thinking != "disabled" {
+		return Config{}, fmt.Errorf("thinking должен быть enabled или disabled")
 	}
 	if len(cfg.ResponseSchema) > 0 {
 		if !json.Valid(cfg.ResponseSchema) {
@@ -77,6 +85,7 @@ func normalize(cfg *Config) {
 	cfg.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
 	cfg.Model = strings.TrimSpace(cfg.Model)
 	cfg.ReasoningEffort = strings.TrimSpace(cfg.ReasoningEffort)
+	cfg.Thinking = strings.TrimSpace(cfg.Thinking)
 	stopSequences := cfg.StopSequences[:0]
 	for _, sequence := range cfg.StopSequences {
 		if sequence = strings.TrimSpace(sequence); sequence != "" {
