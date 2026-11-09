@@ -38,6 +38,9 @@ func main() {
 		}
 	}
 	client := llm.NewOpenAICompatibleClient(cfg.BaseURL, cfg.APIKey, cfg.Model, cfg.Timeout, options)
+	client.SetToolCallObserver(func(call llm.ToolCall) {
+		fmt.Fprintf(os.Stderr, "Вызов инструмента: %s\nАргументы: %s\n", call.Function.Name, call.Function.Arguments)
+	})
 	chat := app.NewChatService(client)
 
 	prompt, err := readPrompt(os.Stdin, promptArgs)

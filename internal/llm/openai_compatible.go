@@ -6,10 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"time"
+
+	"llm-console/internal/tools"
 )
 
 // OpenAICompatibleClient supports providers exposing POST /chat/completions.
@@ -19,6 +20,7 @@ type OpenAICompatibleClient struct {
 	model      string
 	options    CompletionOptions
 	httpClient *http.Client
+	onToolCall func(ToolCall)
 }
 
 func NewOpenAICompatibleClient(baseURL, apiKey, model string, timeout time.Duration, options CompletionOptions) *OpenAICompatibleClient {
@@ -31,15 +33,74 @@ func NewOpenAICompatibleClient(baseURL, apiKey, model string, timeout time.Durat
 	}
 }
 
+// SetToolCallObserver registers a callback invoked before a tool call is executed.
+// Configure the observer before calling Complete.
+func (c *OpenAICompatibleClient) SetToolCallObserver(observer func(ToolCall)) {
+	c.onToolCall = observer
+}
+
 func (c *OpenAICompatibleClient) Complete(ctx context.Context, messages []Message) (Result, error) {
 	requestMessages := messages
 	if c.options.ResponseSchema != nil {
 		requestMessages = append([]Message{jsonSchemaInstruction(c.options.ResponseSchema.Schema)}, messages...)
 	}
 
+	// Keep caller-owned messages intact while appending tool interactions.
+	requestMessages = append([]Message(nil), requestMessages...)
+	var total *Usage
+	for round := 0; round < 10; round++ {
+		response, err := c.completeOnce(ctx, requestMessages)
+		if err != nil {
+			return Result{}, err
+		}
+		if response.Usage != nil {
+			if total == nil {
+				total = &Usage{}
+			}
+			total.PromptTokens += response.Usage.PromptTokens
+			total.CompletionTokens += response.Usage.CompletionTokens
+			total.TotalTokens += response.Usage.TotalTokens
+		}
+		if len(response.Choices) == 0 {
+			return Result{}, fmt.Errorf("API returned no choices")
+		}
+		message := response.Choices[0].Message
+		if len(message.ToolCalls) == 0 {
+			if strings.TrimSpace(message.Content) == "" {
+				return Result{}, fmt.Errorf("API returned an empty answer")
+			}
+			return Result{Content: message.Content, Usage: total}, nil
+		}
+		requestMessages = append(requestMessages, message)
+		for _, call := range message.ToolCalls {
+			if c.onToolCall != nil {
+				c.onToolCall(call)
+			}
+			if call.ID == "" {
+				return Result{}, fmt.Errorf("API returned a tool call without an ID")
+			}
+			var output string
+			var callErr error
+			if call.Type != "function" {
+				callErr = fmt.Errorf("unsupported tool type: %s", call.Type)
+			} else {
+				output, callErr = tools.Execute(call.Function.Name, call.Function.Arguments)
+			}
+			if callErr != nil {
+				encoded, _ := json.Marshal(map[string]string{"error": callErr.Error()})
+				output = string(encoded)
+			}
+			requestMessages = append(requestMessages, Message{Role: "tool", ToolCallID: call.ID, Content: output})
+		}
+	}
+	return Result{}, fmt.Errorf("tool call limit exceeded")
+}
+
+func (c *OpenAICompatibleClient) completeOnce(ctx context.Context, messages []Message) (completionResponse, error) {
 	payload, err := json.Marshal(completionRequest{
+		Tools:           tools.Definitions(),
 		Model:           c.model,
-		Messages:        requestMessages,
+		Messages:        messages,
 		MaxTokens:       c.options.MaxTokens,
 		Temperature:     c.options.Temperature,
 		Thinking:        newThinkingOption(c.options.Thinking),
@@ -48,39 +109,31 @@ func (c *OpenAICompatibleClient) Complete(ctx context.Context, messages []Messag
 		ResponseFormat:  newResponseFormat(c.options.ResponseSchema),
 	})
 	if err != nil {
-		return Result{}, fmt.Errorf("encode request: %w", err)
+		return completionResponse{}, fmt.Errorf("encode request: %w", err)
 	}
-
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(payload))
 	if err != nil {
-		return Result{}, fmt.Errorf("create request: %w", err)
+		return completionResponse{}, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Content-Type", "application/json")
-
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return Result{}, fmt.Errorf("send request: %w", err)
+		return completionResponse{}, fmt.Errorf("send request: %w", err)
 	}
 	defer resp.Body.Close()
-
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return Result{}, fmt.Errorf("read response: %w", err)
+		return completionResponse{}, fmt.Errorf("read response: %w", err)
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return Result{}, fmt.Errorf("API returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		return completionResponse{}, fmt.Errorf("API returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
-
 	var result completionResponse
 	if err := json.Unmarshal(body, &result); err != nil {
-		return Result{}, fmt.Errorf("decode response: %w", err)
+		return completionResponse{}, fmt.Errorf("decode response: %w", err)
 	}
-	if len(result.Choices) == 0 || strings.TrimSpace(result.Choices[0].Message.Content) == "" {
-		log.Printf("LLM API returned an empty answer; response body: %s", string(body))
-		return Result{}, fmt.Errorf("API returned an empty answer")
-	}
-	return Result{Content: result.Choices[0].Message.Content, Usage: result.Usage}, nil
+	return result, nil
 }
 
 func newThinkingOption(value string) *thinkingOption {
