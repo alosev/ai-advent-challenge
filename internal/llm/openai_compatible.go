@@ -21,22 +21,6 @@ type OpenAICompatibleClient struct {
 	httpClient *http.Client
 }
 
-// CompletionOptions contains optional controls supported by the OpenAI chat
-// completions API.
-type CompletionOptions struct {
-	MaxTokens       int
-	Temperature     *float64
-	Thinking        string
-	ReasoningEffort string
-	StopSequences   []string
-	ResponseSchema  *ResponseSchema
-}
-
-// ResponseSchema describes the desired JSON response.
-type ResponseSchema struct {
-	Schema json.RawMessage
-}
-
 func NewOpenAICompatibleClient(baseURL, apiKey, model string, timeout time.Duration, options CompletionOptions) *OpenAICompatibleClient {
 	return &OpenAICompatibleClient{
 		baseURL:    strings.TrimRight(baseURL, "/"),
@@ -53,16 +37,7 @@ func (c *OpenAICompatibleClient) Complete(ctx context.Context, messages []Messag
 		requestMessages = append([]Message{jsonSchemaInstruction(c.options.ResponseSchema.Schema)}, messages...)
 	}
 
-	payload, err := json.Marshal(struct {
-		Model           string          `json:"model"`
-		Messages        []Message       `json:"messages"`
-		MaxTokens       int             `json:"max_tokens,omitempty"`
-		Temperature     *float64        `json:"temperature,omitempty"`
-		Thinking        *thinkingOption `json:"thinking,omitempty"`
-		ReasoningEffort string          `json:"reasoning_effort,omitempty"`
-		StopSequences   []string        `json:"stop,omitempty"`
-		ResponseFormat  *responseFormat `json:"response_format,omitempty"`
-	}{
+	payload, err := json.Marshal(completionRequest{
 		Model:           c.model,
 		Messages:        requestMessages,
 		MaxTokens:       c.options.MaxTokens,
@@ -97,12 +72,7 @@ func (c *OpenAICompatibleClient) Complete(ctx context.Context, messages []Messag
 		return Result{}, fmt.Errorf("API returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 
-	var result struct {
-		Usage   *Usage `json:"usage"`
-		Choices []struct {
-			Message Message `json:"message"`
-		} `json:"choices"`
-	}
+	var result completionResponse
 	if err := json.Unmarshal(body, &result); err != nil {
 		return Result{}, fmt.Errorf("decode response: %w", err)
 	}
@@ -113,19 +83,11 @@ func (c *OpenAICompatibleClient) Complete(ctx context.Context, messages []Messag
 	return Result{Content: result.Choices[0].Message.Content, Usage: result.Usage}, nil
 }
 
-type thinkingOption struct {
-	Type string `json:"type"`
-}
-
 func newThinkingOption(value string) *thinkingOption {
 	if value == "" {
 		return nil
 	}
 	return &thinkingOption{Type: value}
-}
-
-type responseFormat struct {
-	Type string `json:"type"`
 }
 
 func newResponseFormat(schema *ResponseSchema) *responseFormat {
