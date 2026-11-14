@@ -16,8 +16,10 @@ type Usage struct {
 }
 
 type Result struct {
-	Content string
-	Usage   *Usage
+	// Messages contains all generated messages, including tool interactions.
+	Messages []Message
+	Content  string
+	Usage    *Usage
 }
 
 // ToolCall is a function call requested by the provider.

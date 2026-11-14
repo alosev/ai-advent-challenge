@@ -15,12 +15,13 @@ import (
 
 // OpenAICompatibleClient supports providers exposing POST /chat/completions.
 type OpenAICompatibleClient struct {
-	baseURL    string
-	apiKey     string
-	model      string
-	options    CompletionOptions
-	httpClient *http.Client
-	onToolCall func(ToolCall)
+	baseURL      string
+	apiKey       string
+	model        string
+	options      CompletionOptions
+	httpClient   *http.Client
+	onToolCall   func(ToolCall)
+	onToolResult func(ToolCall, string)
 }
 
 func NewOpenAICompatibleClient(baseURL, apiKey, model string, timeout time.Duration, options CompletionOptions) *OpenAICompatibleClient {
@@ -39,6 +40,12 @@ func (c *OpenAICompatibleClient) SetToolCallObserver(observer func(ToolCall)) {
 	c.onToolCall = observer
 }
 
+// SetToolResultObserver registers a callback invoked after each tool execution,
+// including failures encoded as tool output. Configure before calling Complete.
+func (c *OpenAICompatibleClient) SetToolResultObserver(observer func(ToolCall, string)) {
+	c.onToolResult = observer
+}
+
 func (c *OpenAICompatibleClient) Complete(ctx context.Context, messages []Message) (Result, error) {
 	requestMessages := messages
 	if c.options.ResponseSchema != nil {
@@ -47,11 +54,12 @@ func (c *OpenAICompatibleClient) Complete(ctx context.Context, messages []Messag
 
 	// Keep caller-owned messages intact while appending tool interactions.
 	requestMessages = append([]Message(nil), requestMessages...)
+	generatedStart := len(requestMessages)
 	var total *Usage
 	for round := 0; round < 10; round++ {
 		response, err := c.completeOnce(ctx, requestMessages)
 		if err != nil {
-			return Result{}, err
+			return Result{Usage: total}, err
 		}
 		if response.Usage != nil {
 			if total == nil {
@@ -62,14 +70,15 @@ func (c *OpenAICompatibleClient) Complete(ctx context.Context, messages []Messag
 			total.TotalTokens += response.Usage.TotalTokens
 		}
 		if len(response.Choices) == 0 {
-			return Result{}, fmt.Errorf("API returned no choices")
+			return Result{Usage: total}, fmt.Errorf("API returned no choices")
 		}
 		message := response.Choices[0].Message
 		if len(message.ToolCalls) == 0 {
 			if strings.TrimSpace(message.Content) == "" {
-				return Result{}, fmt.Errorf("API returned an empty answer")
+				return Result{Usage: total}, fmt.Errorf("API returned an empty answer")
 			}
-			return Result{Content: message.Content, Usage: total}, nil
+			requestMessages = append(requestMessages, message)
+			return Result{Content: message.Content, Usage: total, Messages: requestMessages[generatedStart:]}, nil
 		}
 		requestMessages = append(requestMessages, message)
 		for _, call := range message.ToolCalls {
@@ -77,7 +86,7 @@ func (c *OpenAICompatibleClient) Complete(ctx context.Context, messages []Messag
 				c.onToolCall(call)
 			}
 			if call.ID == "" {
-				return Result{}, fmt.Errorf("API returned a tool call without an ID")
+				return Result{Usage: total}, fmt.Errorf("API returned a tool call without an ID")
 			}
 			var output string
 			var callErr error
@@ -90,10 +99,13 @@ func (c *OpenAICompatibleClient) Complete(ctx context.Context, messages []Messag
 				encoded, _ := json.Marshal(map[string]string{"error": callErr.Error()})
 				output = string(encoded)
 			}
+			if c.onToolResult != nil {
+				c.onToolResult(call, output)
+			}
 			requestMessages = append(requestMessages, Message{Role: "tool", ToolCallID: call.ID, Content: output})
 		}
 	}
-	return Result{}, fmt.Errorf("tool call limit exceeded")
+	return Result{Usage: total}, fmt.Errorf("tool call limit exceeded")
 }
 
 func (c *OpenAICompatibleClient) completeOnce(ctx context.Context, messages []Message) (completionResponse, error) {
