@@ -9,6 +9,7 @@ import (
 
 	"llm-console/internal/app"
 	"llm-console/internal/config"
+	"llm-console/internal/history"
 	"llm-console/internal/llm"
 )
 
@@ -43,7 +44,10 @@ func run(args []string) error {
 		options.ResponseSchema = &llm.ResponseSchema{Schema: cfg.ResponseSchema}
 	}
 	client := llm.NewOpenAICompatibleClient(cfg.BaseURL, cfg.APIKey, cfg.Model, cfg.Timeout, options)
-	chat := app.NewChatService(client)
+	chat, err := app.NewChatServiceWithHistory(client, history.NewJSONStore(cfg.HistoryPath))
+	if err != nil {
+		return fmt.Errorf("ошибка загрузки истории (файл оставлен без изменений): %w", err)
+	}
 	ui := newConsole(os.Stdout)
 	ui.observeTools(client)
 	if err := runChat(context.Background(), os.Stdin, ui, chat); err != nil {

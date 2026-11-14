@@ -1,2 +1,6 @@
 # Contains local credentials. Create it from config.example.json.
 config.json
+
+# Local conversation and temporary history writes.
+history.json
+.history-*.tmp

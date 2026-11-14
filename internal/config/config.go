@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -25,6 +26,13 @@ func Load(path string) (Config, error) {
 		return Config{}, err
 	}
 	normalize(&cfg)
+	cfg.HistoryPath = strings.TrimSpace(cfg.HistoryPath)
+	if cfg.HistoryPath == "" {
+		cfg.HistoryPath = "history.json"
+	}
+	if !filepath.IsAbs(cfg.HistoryPath) {
+		cfg.HistoryPath = filepath.Join(filepath.Dir(path), cfg.HistoryPath)
+	}
 	if cfg.APIKey == "" {
 		return Config{}, fmt.Errorf("задайте api_key в %s", path)
 	}

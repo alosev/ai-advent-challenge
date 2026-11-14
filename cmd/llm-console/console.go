@@ -8,11 +8,15 @@ import (
 	"os"
 	"strings"
 
+	"llm-console/internal/history"
 	"llm-console/internal/llm"
 )
 
 type asker interface {
 	Ask(context.Context, string) (llm.Result, error)
+	Clear() error
+	TotalUsage() *llm.Usage
+	History() history.State
 }
 
 type console struct {
@@ -25,12 +29,55 @@ func newConsole(out *os.File) console {
 }
 
 func (c console) observeTools(client *llm.OpenAICompatibleClient) {
-	client.SetToolCallObserver(func(call llm.ToolCall) {
-		c.block("ВЫЗОВ ИНСТРУМЕНТА · "+call.Function.Name, call.Function.Arguments, "33")
-	})
+	client.SetToolCallObserver(c.toolCall)
 	client.SetToolResultObserver(func(call llm.ToolCall, output string) {
-		c.block("РЕЗУЛЬТАТ ИНСТРУМЕНТА · "+call.Function.Name, output, "35")
+		c.toolResult(call.Function.Name, output)
 	})
+}
+
+func (c console) toolCall(call llm.ToolCall) {
+	c.block("ВЫЗОВ ИНСТРУМЕНТА · "+call.Function.Name, call.Function.Arguments, "33")
+}
+
+func (c console) toolResult(name, output string) {
+	c.block("РЕЗУЛЬТАТ ИНСТРУМЕНТА · "+name, output, "35")
+}
+
+func (c console) history(state history.State) {
+	toolNames := make(map[string]string)
+	var displayedTotal *llm.Usage
+	for _, message := range state.Messages {
+		switch message.Role {
+		case "user":
+			c.heading("ВЫ", "1;36")
+			fmt.Fprintf(c.out, "> %s\n", message.Content)
+		case "assistant":
+			if len(message.ToolCalls) == 0 {
+				c.answer(llm.Result{Content: message.Content, Usage: message.Usage})
+				c.totalUsage(message.TotalUsage)
+				displayedTotal = message.TotalUsage
+				fmt.Fprintln(c.out)
+			} else if strings.TrimSpace(message.Content) != "" {
+				c.block("АССИСТЕНТ", message.Content, "1;32")
+			}
+			for _, call := range message.ToolCalls {
+				toolNames[call.ID] = call.Function.Name
+				c.toolCall(call)
+			}
+		case "tool":
+			name := toolNames[message.ToolCallID]
+			if name == "" {
+				name = message.ToolCallID
+			}
+			c.toolResult(name, message.Content)
+		}
+	}
+	// A failed turn can add token usage without adding an assistant message.
+	if state.Usage != nil && (displayedTotal == nil || *displayedTotal != *state.Usage) {
+		fmt.Fprintln(c.out)
+		c.totalUsage(state.Usage)
+		fmt.Fprintln(c.out)
+	}
 }
 
 func isTerminal(file *os.File) bool {
@@ -85,9 +132,9 @@ func (c console) usageLine(label string, usage *llm.Usage) {
 // runChat uses line-oriented input; multiline messages end with /send.
 func runChat(ctx context.Context, in io.Reader, ui console, chat asker) error {
 	reader := bufio.NewReader(in)
-	var total *llm.Usage
-	fmt.Fprintln(ui.out, "Диалог · Enter — отправить · /multi — многострочный ввод · /exit — выход")
-	fmt.Fprintln(ui.out, "Контекст сохраняется только до выхода из программы.")
+	fmt.Fprintln(ui.out, "Диалог · Enter — отправить · /multi — многострочный ввод · /clear — очистить историю · /exit — выход")
+	fmt.Fprintln(ui.out, "История сохраняется автоматически и загружается при запуске.")
+	ui.history(chat.History())
 	for {
 		ui.heading("ВЫ", "1;36")
 		fmt.Fprint(ui.out, "> ")
@@ -98,6 +145,17 @@ func runChat(ctx context.Context, in io.Reader, ui console, chat asker) error {
 		prompt := strings.TrimSpace(line)
 		if prompt == "/exit" || prompt == "/quit" {
 			return nil
+		}
+		if prompt == "/clear" {
+			if err := chat.Clear(); err != nil {
+				ui.block("ОШИБКА ОЧИСТКИ", err.Error(), "1;31")
+			} else {
+				ui.block("ИСТОРИЯ ОЧИЩЕНА", "Переписка удалена, контекст и счётчик токенов сброшены.", "34")
+			}
+			if err == io.EOF {
+				return nil
+			}
+			continue
 		}
 		if prompt == "/multi" {
 			fmt.Fprintln(ui.out, "Введите сообщение; /send на отдельной строке — отправить, /cancel — отменить.")
@@ -124,21 +182,15 @@ func runChat(ctx context.Context, in io.Reader, ui console, chat asker) error {
 		}
 		if prompt != "" {
 			answer, askErr := chat.Ask(ctx, prompt)
-			if answer.Usage != nil {
-				if total == nil {
-					total = &llm.Usage{}
-				}
-				total.TotalTokens += answer.Usage.TotalTokens
-				total.PromptTokens += answer.Usage.PromptTokens
-				total.CompletionTokens += answer.Usage.CompletionTokens
+			if answer.Content != "" {
+				ui.answer(answer)
+			} else {
+				ui.usage(answer.Usage)
 			}
 			if askErr != nil {
 				ui.block("ОШИБКА", askErr.Error(), "1;31")
-				ui.usage(answer.Usage)
-			} else {
-				ui.answer(answer)
 			}
-			ui.totalUsage(total)
+			ui.totalUsage(chat.TotalUsage())
 			fmt.Fprintln(ui.out)
 		}
 		if err == io.EOF {
