@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"llm-console/internal/app"
 	"llm-console/internal/history"
 	"llm-console/internal/llm"
 )
@@ -17,6 +18,8 @@ type asker interface {
 	Clear() error
 	TotalUsage() *llm.Usage
 	History() history.State
+	ContextStrategy() app.ContextStrategy
+	SetContextStrategy(app.ContextStrategy) error
 }
 
 type console struct {
@@ -145,6 +148,24 @@ func runChat(ctx context.Context, in io.Reader, ui console, chat asker) error {
 		prompt := strings.TrimSpace(line)
 		if prompt == "/exit" || prompt == "/quit" {
 			return nil
+		}
+		if fields := strings.Fields(prompt); len(fields) > 0 && fields[0] == "/strategy" {
+			switch len(fields) {
+			case 1:
+				ui.block("СТРАТЕГИЯ КОНТЕКСТА", string(chat.ContextStrategy())+"\nДоступны: summary, sliding_window, sticky_facts. Переключение: /strategy <имя>", "34")
+			case 2:
+				if strategyErr := chat.SetContextStrategy(app.ContextStrategy(fields[1])); strategyErr != nil {
+					ui.block("ОШИБКА", strategyErr.Error(), "1;31")
+				} else {
+					ui.block("СТРАТЕГИЯ КОНТЕКСТА", string(chat.ContextStrategy()), "34")
+				}
+			default:
+				ui.block("ОШИБКА", "Используйте /strategy <summary|sliding_window|sticky_facts>", "1;31")
+			}
+			if err == io.EOF {
+				return nil
+			}
+			continue
 		}
 		if prompt == "/clear" {
 			if err := chat.Clear(); err != nil {

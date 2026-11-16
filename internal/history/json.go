@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"llm-console/internal/llm"
 )
@@ -24,10 +25,12 @@ type Summary struct {
 }
 
 type State struct {
-	Summary  *Summary   `json:"summary,omitempty"`
-	Version  int        `json:"version"`
-	Messages []Message  `json:"messages"`
-	Usage    *llm.Usage `json:"usage,omitempty"`
+	Facts             map[string]string `json:"facts,omitempty"`
+	FactsMessageCount int               `json:"facts_message_count,omitempty"`
+	Summary           *Summary          `json:"summary,omitempty"`
+	Version           int               `json:"version"`
+	Messages          []Message         `json:"messages"`
+	Usage             *llm.Usage        `json:"usage,omitempty"`
 }
 
 type JSONStore struct {
@@ -52,6 +55,14 @@ func (s *JSONStore) Load() (State, error) {
 	}
 	if state.Version != 1 {
 		return State{}, fmt.Errorf("неподдерживаемая версия истории: %d", state.Version)
+	}
+	if state.FactsMessageCount < 0 || state.FactsMessageCount > len(state.Messages) {
+		return State{}, fmt.Errorf("некорректная граница обновления facts")
+	}
+	for key, value := range state.Facts {
+		if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
+			return State{}, fmt.Errorf("facts содержит пустой ключ или значение")
+		}
 	}
 	if state.Summary != nil {
 		if state.Summary.Content == "" || state.Summary.MessageCount <= 0 || state.Summary.MessageCount > len(state.Messages) {

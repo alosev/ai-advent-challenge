@@ -37,6 +37,19 @@ func NewOpenAICompatibleClient(baseURL, apiKey, model string, timeout time.Durat
 
 // SummaryClient shares transport settings, but uses plain text and no tools.
 func (c *OpenAICompatibleClient) SummaryClient() Client {
+	return c.contextClient()
+}
+
+// FactsClient requests a JSON string map without answer-specific constraints.
+func (c *OpenAICompatibleClient) FactsClient() Client {
+	client := c.contextClient()
+	// Memory grows independently of the configured limit for ordinary answers.
+	client.options.MaxTokens = 0
+	client.options.ResponseSchema = &ResponseSchema{Schema: json.RawMessage(`{"type":"object","additionalProperties":{"type":"string","minLength":1},"description":"Полный объект facts. Каждый ключ — отдельный факт, каждое значение — непустая строка. Массивы, вложенные объекты, числа, boolean и null запрещены."}`)}
+	return client
+}
+
+func (c *OpenAICompatibleClient) contextClient() *OpenAICompatibleClient {
 	return &OpenAICompatibleClient{
 		baseURL: c.baseURL, apiKey: c.apiKey, model: c.model,
 		httpClient: c.httpClient, disableTools: true,

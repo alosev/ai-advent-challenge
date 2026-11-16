@@ -26,6 +26,11 @@ func Load(path string) (Config, error) {
 		return Config{}, err
 	}
 	normalize(&cfg)
+	switch cfg.ContextStrategy {
+	case "summary", "sliding_window", "sticky_facts":
+	default:
+		return Config{}, fmt.Errorf("context_strategy должен быть summary, sliding_window или sticky_facts")
+	}
 	cfg.HistoryPath = strings.TrimSpace(cfg.HistoryPath)
 	if cfg.HistoryPath == "" {
 		cfg.HistoryPath = "history.json"
@@ -73,6 +78,10 @@ func readFile(path string) (Config, error) {
 }
 
 func normalize(cfg *Config) {
+	cfg.ContextStrategy = strings.TrimSpace(cfg.ContextStrategy)
+	if cfg.ContextStrategy == "" {
+		cfg.ContextStrategy = "summary"
+	}
 	cfg.APIKey = strings.TrimSpace(cfg.APIKey)
 	cfg.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
 	cfg.Model = strings.TrimSpace(cfg.Model)

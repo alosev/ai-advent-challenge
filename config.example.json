@@ -4,6 +4,7 @@
   "model": "deepseek-flash",
   "timeout_seconds": 60,
   "history_path": "history.json",
+  "context_strategy": "summary",
   "max_tokens": 500,
   "temperature": 1.0,
   "thinking": "disabled",

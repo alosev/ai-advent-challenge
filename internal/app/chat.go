@@ -20,14 +20,18 @@ type HistoryStore interface {
 type ChatService struct {
 	client        llm.Client
 	summaryClient llm.Client
+	factsClient   llm.Client
 	summary       *history.Summary
 	messages      []history.Message
 	usage         *llm.Usage
 	store         HistoryStore
+	strategy      ContextStrategy
+	facts         map[string]string
+	factsCount    int
 }
 
 func NewChatService(client llm.Client) *ChatService {
-	return &ChatService{client: client}
+	return &ChatService{client: client, strategy: StrategySummary}
 }
 
 func NewChatServiceWithHistory(client llm.Client, store HistoryStore) (*ChatService, error) {
@@ -35,7 +39,8 @@ func NewChatServiceWithHistory(client llm.Client, store HistoryStore) (*ChatServ
 	if err != nil {
 		return nil, err
 	}
-	return &ChatService{client: client, messages: state.Messages, summary: state.Summary, usage: state.Usage, store: store}, nil
+	return &ChatService{client: client, messages: state.Messages, summary: state.Summary, usage: state.Usage, store: store,
+		strategy: StrategySummary, facts: state.Facts, factsCount: state.FactsMessageCount}, nil
 }
 
 func (s *ChatService) TotalUsage() *llm.Usage {
@@ -61,7 +66,11 @@ func (s *ChatService) History() history.State {
 		value := *s.summary
 		summary = &value
 	}
-	return history.State{Version: 1, Messages: messages, Summary: summary, Usage: s.TotalUsage()}
+	facts := make(map[string]string, len(s.facts))
+	for key, value := range s.facts {
+		facts[key] = value
+	}
+	return history.State{Version: 1, Messages: messages, Summary: summary, Usage: s.TotalUsage(), Facts: facts, FactsMessageCount: s.factsCount}
 }
 
 func copyUsage(usage *llm.Usage) *llm.Usage {
@@ -80,6 +89,8 @@ func (s *ChatService) Clear() error {
 	}
 	s.messages = nil
 	s.summary = nil
+	s.facts = nil
+	s.factsCount = 0
 	s.usage = nil
 	return nil
 }
@@ -89,11 +100,15 @@ func (s *ChatService) Ask(ctx context.Context, prompt string) (llm.Result, error
 	if prompt == "" {
 		return llm.Result{}, fmt.Errorf("prompt must not be empty")
 	}
-	if err := s.summarize(ctx); err != nil {
+	if err := s.prepareContext(ctx); err != nil {
 		return llm.Result{}, errors.Join(err, s.save())
 	}
-	messages := s.contextMessages()
-	messages = append(messages, llm.Message{Role: "user", Content: prompt})
+	var messages []llm.Message
+	if s.strategy == StrategySummary {
+		messages = append(s.contextMessages(), llm.Message{Role: "user", Content: prompt})
+	} else {
+		messages = s.windowMessages(prompt)
+	}
 	result, askErr := s.client.Complete(ctx, messages)
 	s.addUsage(result.Usage)
 	if askErr == nil {
@@ -105,11 +120,14 @@ func (s *ChatService) Ask(ctx context.Context, prompt string) (llm.Result, error
 		} else {
 			s.messages = append(s.messages, history.Message{Message: llm.Message{Role: "assistant", Content: result.Content}})
 		}
+		if s.strategy == StrategyStickyFacts {
+			askErr = s.updateFacts(ctx)
+		}
 		last := &s.messages[len(s.messages)-1]
 		last.Usage = copyUsage(result.Usage)
 		last.TotalUsage = s.TotalUsage()
 	}
-	// Save the summary even when the subsequent answer failed.
+	// Save context and usage even when an API request failed.
 	if err := s.save(); err != nil {
 		return result, errors.Join(askErr, err)
 	}
@@ -119,6 +137,11 @@ func (s *ChatService) Ask(ctx context.Context, prompt string) (llm.Result, error
 // SetSummaryClient allows summarization without tools or response-format constraints.
 func (s *ChatService) SetSummaryClient(client llm.Client) {
 	s.summaryClient = client
+}
+
+// SetFactsClient configures structured memory updates independently of summaries.
+func (s *ChatService) SetFactsClient(client llm.Client) {
+	s.factsClient = client
 }
 
 func (s *ChatService) contextMessages() []llm.Message {

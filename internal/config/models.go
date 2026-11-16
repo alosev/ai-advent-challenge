@@ -8,6 +8,7 @@ import (
 // Config contains runtime settings. Keeping it independent from the UI makes it
 // reusable by a CLI, desktop application, or HTTP server.
 type Config struct {
+	ContextStrategy string          `json:"context_strategy"`
 	HistoryPath     string          `json:"history_path"`
 	APIKey          string          `json:"api_key"`
 	BaseURL         string          `json:"base_url"`
