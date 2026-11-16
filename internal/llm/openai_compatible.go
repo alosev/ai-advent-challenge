@@ -15,6 +15,7 @@ import (
 
 // OpenAICompatibleClient supports providers exposing POST /chat/completions.
 type OpenAICompatibleClient struct {
+	disableTools bool
 	baseURL      string
 	apiKey       string
 	model        string
@@ -31,6 +32,16 @@ func NewOpenAICompatibleClient(baseURL, apiKey, model string, timeout time.Durat
 		model:      model,
 		options:    options,
 		httpClient: &http.Client{Timeout: timeout},
+	}
+}
+
+// SummaryClient shares transport settings, but uses plain text and no tools.
+func (c *OpenAICompatibleClient) SummaryClient() Client {
+	return &OpenAICompatibleClient{
+		baseURL: c.baseURL, apiKey: c.apiKey, model: c.model,
+		httpClient: c.httpClient, disableTools: true,
+		options: CompletionOptions{MaxTokens: c.options.MaxTokens, Temperature: c.options.Temperature,
+			Thinking: c.options.Thinking, ReasoningEffort: c.options.ReasoningEffort},
 	}
 }
 
@@ -80,6 +91,9 @@ func (c *OpenAICompatibleClient) Complete(ctx context.Context, messages []Messag
 			requestMessages = append(requestMessages, message)
 			return Result{Content: message.Content, Usage: total, Messages: requestMessages[generatedStart:]}, nil
 		}
+		if c.disableTools {
+			return Result{Usage: total}, fmt.Errorf("API returned tool calls during summarization")
+		}
 		requestMessages = append(requestMessages, message)
 		for _, call := range message.ToolCalls {
 			if c.onToolCall != nil {
@@ -109,8 +123,12 @@ func (c *OpenAICompatibleClient) Complete(ctx context.Context, messages []Messag
 }
 
 func (c *OpenAICompatibleClient) completeOnce(ctx context.Context, messages []Message) (completionResponse, error) {
+	definitions := tools.Definitions()
+	if c.disableTools {
+		definitions = nil
+	}
 	payload, err := json.Marshal(completionRequest{
-		Tools:           tools.Definitions(),
+		Tools:           definitions,
 		Model:           c.model,
 		Messages:        messages,
 		MaxTokens:       c.options.MaxTokens,

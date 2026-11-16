@@ -17,7 +17,14 @@ type Message struct {
 	TotalUsage *llm.Usage `json:"total_usage,omitempty"`
 }
 
+// Summary is kept separately from the transcript used by the UI.
+type Summary struct {
+	Content      string `json:"content"`
+	MessageCount int    `json:"message_count"`
+}
+
 type State struct {
+	Summary  *Summary   `json:"summary,omitempty"`
 	Version  int        `json:"version"`
 	Messages []Message  `json:"messages"`
 	Usage    *llm.Usage `json:"usage,omitempty"`
@@ -45,6 +52,15 @@ func (s *JSONStore) Load() (State, error) {
 	}
 	if state.Version != 1 {
 		return State{}, fmt.Errorf("неподдерживаемая версия истории: %d", state.Version)
+	}
+	if state.Summary != nil {
+		if state.Summary.Content == "" || state.Summary.MessageCount <= 0 || state.Summary.MessageCount > len(state.Messages) {
+			return State{}, fmt.Errorf("некорректная суммаризация истории")
+		}
+		last := state.Messages[state.Summary.MessageCount-1]
+		if last.Role != "assistant" || len(last.ToolCalls) != 0 {
+			return State{}, fmt.Errorf("суммаризация обрывается внутри хода")
+		}
 	}
 	for _, message := range state.Messages {
 		switch message.Role {

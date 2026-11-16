@@ -48,6 +48,7 @@ func run(args []string) error {
 	if err != nil {
 		return fmt.Errorf("ошибка загрузки истории (файл оставлен без изменений): %w", err)
 	}
+	chat.SetSummaryClient(client.SummaryClient())
 	ui := newConsole(os.Stdout)
 	ui.observeTools(client)
 	if err := runChat(context.Background(), os.Stdin, ui, chat); err != nil {
