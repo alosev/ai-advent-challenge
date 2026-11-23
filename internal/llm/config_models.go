@@ -1,6 +1,6 @@
 package llm
 
-import "encoding/json"
+import "llm-console/internal/tools"
 
 // CompletionOptions contains optional controls supported by the OpenAI chat
 // completions API.
@@ -9,11 +9,7 @@ type CompletionOptions struct {
 	Temperature     *float64
 	Thinking        string
 	ReasoningEffort string
-	StopSequences   []string
-	ResponseSchema  *ResponseSchema
-}
-
-// ResponseSchema describes the desired JSON response.
-type ResponseSchema struct {
-	Schema json.RawMessage
+	// FinalTool ends the turn with its arguments, without executing it or
+	// sending a tool result back to the provider.
+	FinalTool *tools.Definition
 }

@@ -4,18 +4,11 @@
   "model": "deepseek-flash",
   "timeout_seconds": 60,
   "history_path": "history.json",
-  "context_strategy": "summary",
-  "max_tokens": 500,
+  "working_memory_path": "working-memory.json",
+  "long_term_memory_path": "long-term-memory.json",
+  "api_response_log_path": "api-responses.jsonl",
+  "max_tokens": 2048,
   "temperature": 1.0,
   "thinking": "disabled",
-  "reasoning_effort": "",
-  "stop_sequences": ["\n<END_OF_RESPONSE>"],
-  "response_schema": {
-    "type": "object",
-    "properties": {
-      "answer": { "type": "string" }
-    },
-    "required": ["answer"],
-    "additionalProperties": false
-  }
+  "reasoning_effort": ""
 }

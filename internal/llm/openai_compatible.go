@@ -23,6 +23,7 @@ type OpenAICompatibleClient struct {
 	httpClient   *http.Client
 	onToolCall   func(ToolCall)
 	onToolResult func(ToolCall, string)
+	onResponse   func(ResponseRecord)
 }
 
 func NewOpenAICompatibleClient(baseURL, apiKey, model string, timeout time.Duration, options CompletionOptions) *OpenAICompatibleClient {
@@ -37,25 +38,19 @@ func NewOpenAICompatibleClient(baseURL, apiKey, model string, timeout time.Durat
 
 // SummaryClient shares transport settings, but uses plain text and no tools.
 func (c *OpenAICompatibleClient) SummaryClient() Client {
-	return c.contextClient()
-}
-
-// FactsClient requests a JSON string map without answer-specific constraints.
-func (c *OpenAICompatibleClient) FactsClient() Client {
-	client := c.contextClient()
-	// Memory grows independently of the configured limit for ordinary answers.
-	client.options.MaxTokens = 0
-	client.options.ResponseSchema = &ResponseSchema{Schema: json.RawMessage(`{"type":"object","additionalProperties":{"type":"string","minLength":1},"description":"Полный объект facts. Каждый ключ — отдельный факт, каждое значение — непустая строка. Массивы, вложенные объекты, числа, boolean и null запрещены."}`)}
-	return client
-}
-
-func (c *OpenAICompatibleClient) contextClient() *OpenAICompatibleClient {
 	return &OpenAICompatibleClient{
 		baseURL: c.baseURL, apiKey: c.apiKey, model: c.model,
 		httpClient: c.httpClient, disableTools: true,
+		onResponse: c.onResponse,
 		options: CompletionOptions{MaxTokens: c.options.MaxTokens, Temperature: c.options.Temperature,
 			Thinking: c.options.Thinking, ReasoningEffort: c.options.ReasoningEffort},
 	}
+}
+
+// SetResponseObserver observes problematic HTTP responses. Configure it before
+// creating the summary client. Request settings are never included.
+func (c *OpenAICompatibleClient) SetResponseObserver(observer func(ResponseRecord)) {
+	c.onResponse = observer
 }
 
 // SetToolCallObserver registers a callback invoked before a tool call is executed.
@@ -71,20 +66,16 @@ func (c *OpenAICompatibleClient) SetToolResultObserver(observer func(ToolCall, s
 }
 
 func (c *OpenAICompatibleClient) Complete(ctx context.Context, messages []Message) (Result, error) {
-	requestMessages := messages
-	if c.options.ResponseSchema != nil {
-		requestMessages = append([]Message{jsonSchemaInstruction(c.options.ResponseSchema.Schema)}, messages...)
-	}
-
-	// Keep caller-owned messages intact while appending tool interactions.
-	requestMessages = append([]Message(nil), requestMessages...)
+	requestMessages := append([]Message(nil), messages...)
 	generatedStart := len(requestMessages)
 	var total *Usage
+	var lastResponse completionResponse
 	for round := 0; round < 10; round++ {
 		response, err := c.completeOnce(ctx, requestMessages)
 		if err != nil {
 			return Result{Usage: total}, err
 		}
+		lastResponse = response
 		if response.Usage != nil {
 			if total == nil {
 				total = &Usage{}
@@ -94,34 +85,60 @@ func (c *OpenAICompatibleClient) Complete(ctx context.Context, messages []Messag
 			total.TotalTokens += response.Usage.TotalTokens
 		}
 		if len(response.Choices) == 0 {
-			return Result{Usage: total}, fmt.Errorf("API returned no choices")
+			return c.protocolError(response, total, "no_choices", fmt.Errorf("API returned no choices"))
 		}
-		message := response.Choices[0].Message
+		choice := response.Choices[0]
+		message := choice.Message
+		if choice.FinishReason == "length" {
+			return c.protocolError(response, total, "truncated_answer", fmt.Errorf("API обрезал ответ (finish_reason=length, max_tokens=%d); увеличьте max_tokens или задайте 0", c.options.MaxTokens))
+		}
+		switch choice.FinishReason {
+		case "content_filter", "insufficient_system_resource", "aborted":
+			return c.protocolError(response, total, "incomplete_response", fmt.Errorf("API прервал ответ: finish_reason=%s", choice.FinishReason))
+		}
+		if c.disableTools && len(message.ToolCalls) > 0 {
+			return c.protocolError(response, total, "unexpected_tool_calls", fmt.Errorf("API returned tool calls during summarization"))
+		}
+		if final := c.options.FinalTool; final != nil {
+			for _, call := range message.ToolCalls {
+				if call.Function.Name != final.Function.Name {
+					continue
+				}
+				// Reject a mixed batch before executing any ordinary tools. The
+				// final answer must use results already available to the model.
+				if len(message.ToolCalls) != 1 || call.Type != "function" || call.ID == "" {
+					return c.protocolError(response, total, "invalid_final_tool", fmt.Errorf("%s должен быть единственным вызовом в ответе, с типом function и непустым ID", final.Function.Name))
+				}
+				// Consume the terminal call locally. No tool result or additional
+				// request is needed, and no unmatched call enters chat history.
+				terminal := Message{Role: "assistant", Content: call.Function.Arguments, ReasoningContent: message.ReasoningContent}
+				generated := append(requestMessages[generatedStart:], terminal)
+				return c.finalResult(response, total, terminal.Content, generated), nil
+			}
+			if len(message.ToolCalls) == 0 {
+				return c.protocolError(response, total, "missing_final_tool", fmt.Errorf("API не вызвал обязательный инструмент %s; повторный запрос не выполнялся", final.Function.Name))
+			}
+		}
 		if len(message.ToolCalls) == 0 {
 			if strings.TrimSpace(message.Content) == "" {
-				return Result{Usage: total}, fmt.Errorf("API returned an empty answer")
+				return c.protocolError(response, total, "empty_answer", c.emptyAnswerError(choice))
 			}
-			requestMessages = append(requestMessages, message)
-			return Result{Content: message.Content, Usage: total, Messages: requestMessages[generatedStart:]}, nil
+			generated := append(requestMessages[generatedStart:], message)
+			return c.finalResult(response, total, message.Content, generated), nil
 		}
-		if c.disableTools {
-			return Result{Usage: total}, fmt.Errorf("API returned tool calls during summarization")
+		seen := make(map[string]bool, len(message.ToolCalls))
+		for _, call := range message.ToolCalls {
+			if call.ID == "" || seen[call.ID] || call.Type != "function" {
+				return c.protocolError(response, total, "invalid_tool_call", fmt.Errorf("API вернул некорректный вызов инструмента: нужен уникальный непустой ID и тип function"))
+			}
+			seen[call.ID] = true
 		}
 		requestMessages = append(requestMessages, message)
 		for _, call := range message.ToolCalls {
 			if c.onToolCall != nil {
 				c.onToolCall(call)
 			}
-			if call.ID == "" {
-				return Result{Usage: total}, fmt.Errorf("API returned a tool call without an ID")
-			}
-			var output string
-			var callErr error
-			if call.Type != "function" {
-				callErr = fmt.Errorf("unsupported tool type: %s", call.Type)
-			} else {
-				output, callErr = tools.Execute(call.Function.Name, call.Function.Arguments)
-			}
+			output, callErr := tools.Execute(call.Function.Name, call.Function.Arguments)
 			if callErr != nil {
 				encoded, _ := json.Marshal(map[string]string{"error": callErr.Error()})
 				output = string(encoded)
@@ -132,13 +149,54 @@ func (c *OpenAICompatibleClient) Complete(ctx context.Context, messages []Messag
 			requestMessages = append(requestMessages, Message{Role: "tool", ToolCallID: call.ID, Content: output})
 		}
 	}
-	return Result{Usage: total}, fmt.Errorf("tool call limit exceeded")
+	return c.protocolError(lastResponse, total, "tool_call_limit", fmt.Errorf("tool call limit exceeded"))
 }
 
-func (c *OpenAICompatibleClient) completeOnce(ctx context.Context, messages []Message) (completionResponse, error) {
+func (c *OpenAICompatibleClient) protocolError(response completionResponse, usage *Usage, category string, err error) (Result, error) {
+	if c.onResponse != nil {
+		record := response.diagnostic
+		record.Error = category
+		c.onResponse(record)
+	}
+	return Result{Usage: usage}, err
+}
+
+func (c *OpenAICompatibleClient) finalResult(response completionResponse, usage *Usage, content string, generated []Message) Result {
+	result := Result{Content: content, Usage: usage, Messages: generated}
+	if c.onResponse != nil {
+		record := response.diagnostic
+		result.LogInvalidResponse = func() {
+			record.Error = "invalid_final_arguments"
+			c.onResponse(record)
+		}
+	}
+	return result
+}
+
+func (c *OpenAICompatibleClient) completeOnce(ctx context.Context, messages []Message) (result completionResponse, callErr error) {
+	record := ResponseRecord{Time: time.Now().UTC()}
+	defer func() {
+		if c.onResponse == nil || record.HTTPStatus == 0 {
+			return
+		}
+		if callErr != nil && record.Error == "" {
+			record.Error = "invalid_response"
+		}
+		if record.Error != "" {
+			c.onResponse(record)
+		}
+	}()
 	definitions := tools.Definitions()
 	if c.disableTools {
 		definitions = nil
+	}
+	toolChoice := ""
+	thinking, reasoningEffort := c.options.Thinking, c.options.ReasoningEffort
+	if c.options.FinalTool != nil && !c.disableTools {
+		definitions = append(definitions, *c.options.FinalTool)
+		toolChoice = "required"
+		// DeepSeek rejects required tool_choice in thinking mode.
+		thinking, reasoningEffort = "disabled", ""
 	}
 	payload, err := json.Marshal(completionRequest{
 		Tools:           definitions,
@@ -146,10 +204,9 @@ func (c *OpenAICompatibleClient) completeOnce(ctx context.Context, messages []Me
 		Messages:        messages,
 		MaxTokens:       c.options.MaxTokens,
 		Temperature:     c.options.Temperature,
-		Thinking:        newThinkingOption(c.options.Thinking),
-		ReasoningEffort: c.options.ReasoningEffort,
-		StopSequences:   c.options.StopSequences,
-		ResponseFormat:  newResponseFormat(c.options.ResponseSchema),
+		Thinking:        newThinkingOption(thinking),
+		ReasoningEffort: reasoningEffort,
+		ToolChoice:      toolChoice,
 	})
 	if err != nil {
 		return completionResponse{}, fmt.Errorf("encode request: %w", err)
@@ -165,18 +222,39 @@ func (c *OpenAICompatibleClient) completeOnce(ctx context.Context, messages []Me
 		return completionResponse{}, fmt.Errorf("send request: %w", err)
 	}
 	defer resp.Body.Close()
+	record.HTTPStatus = resp.StatusCode
 	body, err := io.ReadAll(resp.Body)
+	record.Body = string(body)
 	if err != nil {
+		record.Error = "read_response"
 		return completionResponse{}, fmt.Errorf("read response: %w", err)
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		record.Error = "http_error"
 		return completionResponse{}, fmt.Errorf("API returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
-	var result completionResponse
 	if err := json.Unmarshal(body, &result); err != nil {
+		record.Error = "invalid_json"
 		return completionResponse{}, fmt.Errorf("decode response: %w", err)
 	}
+	result.diagnostic = record
 	return result, nil
+}
+
+func (c *OpenAICompatibleClient) emptyAnswerError(choice completionChoice) error {
+	hint := "провайдер не вернул текст ответа"
+	switch choice.FinishReason {
+	case "length":
+		hint = "достигнут лимит генерации; увеличьте max_tokens или задайте 0"
+	case "content_filter":
+		hint = "ответ остановлен фильтром провайдера"
+	default:
+		if choice.Message.ReasoningContent != "" {
+			hint = "получены рассуждения без финального ответа"
+		}
+	}
+	return fmt.Errorf("API returned an empty answer (finish_reason=%q, content_bytes=%d, reasoning_bytes=%d, max_tokens=%d): %s",
+		choice.FinishReason, len(choice.Message.Content), len(choice.Message.ReasoningContent), c.options.MaxTokens, hint)
 }
 
 func newThinkingOption(value string) *thinkingOption {
@@ -184,18 +262,4 @@ func newThinkingOption(value string) *thinkingOption {
 		return nil
 	}
 	return &thinkingOption{Type: value}
-}
-
-func newResponseFormat(schema *ResponseSchema) *responseFormat {
-	if schema == nil {
-		return nil
-	}
-	return &responseFormat{Type: "json_object"}
-}
-
-func jsonSchemaInstruction(schema json.RawMessage) Message {
-	return Message{
-		Role:    "system",
-		Content: "Return only a valid JSON object that conforms to this JSON Schema: " + string(schema),
-	}
 }

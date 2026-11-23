@@ -6,16 +6,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"llm-console/internal/llm"
+	"llm-console/internal/memory"
 )
 
 // Message adds history-only statistics to a provider-neutral message.
 type Message struct {
 	llm.Message
-	Usage      *llm.Usage `json:"usage,omitempty"`
-	TotalUsage *llm.Usage `json:"total_usage,omitempty"`
+	Usage       *llm.Usage          `json:"usage,omitempty"`
+	TotalUsage  *llm.Usage          `json:"total_usage,omitempty"`
+	MemorySaved *memory.SavedLayers `json:"memory_saved,omitempty"`
 }
 
 // Summary is kept separately from the transcript used by the UI.
@@ -25,12 +26,9 @@ type Summary struct {
 }
 
 type State struct {
-	Facts             map[string]string `json:"facts,omitempty"`
-	FactsMessageCount int               `json:"facts_message_count,omitempty"`
-	Summary           *Summary          `json:"summary,omitempty"`
-	Version           int               `json:"version"`
-	Messages          []Message         `json:"messages"`
-	Usage             *llm.Usage        `json:"usage,omitempty"`
+	Summary  *Summary   `json:"summary,omitempty"`
+	Messages []Message  `json:"messages"`
+	Usage    *llm.Usage `json:"usage,omitempty"`
 }
 
 type JSONStore struct {
@@ -44,7 +42,7 @@ func NewJSONStore(path string) *JSONStore {
 func (s *JSONStore) Load() (State, error) {
 	data, err := os.ReadFile(s.path)
 	if os.IsNotExist(err) {
-		return State{Version: 1}, nil
+		return State{}, nil
 	}
 	if err != nil {
 		return State{}, fmt.Errorf("чтение истории: %w", err)
@@ -53,17 +51,7 @@ func (s *JSONStore) Load() (State, error) {
 	if err := json.Unmarshal(data, &state); err != nil {
 		return State{}, fmt.Errorf("повреждён JSON истории: %w", err)
 	}
-	if state.Version != 1 {
-		return State{}, fmt.Errorf("неподдерживаемая версия истории: %d", state.Version)
-	}
-	if state.FactsMessageCount < 0 || state.FactsMessageCount > len(state.Messages) {
-		return State{}, fmt.Errorf("некорректная граница обновления facts")
-	}
-	for key, value := range state.Facts {
-		if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
-			return State{}, fmt.Errorf("facts содержит пустой ключ или значение")
-		}
-	}
+
 	if state.Summary != nil {
 		if state.Summary.Content == "" || state.Summary.MessageCount <= 0 || state.Summary.MessageCount > len(state.Messages) {
 			return State{}, fmt.Errorf("некорректная суммаризация истории")
@@ -84,9 +72,9 @@ func (s *JSONStore) Load() (State, error) {
 		return State{}, fmt.Errorf("отрицательный расход токенов в истории")
 	}
 	for _, message := range state.Messages {
-		if message.Usage != nil || message.TotalUsage != nil {
+		if message.Usage != nil || message.TotalUsage != nil || message.MemorySaved != nil {
 			if message.Role != "assistant" || len(message.ToolCalls) != 0 {
-				return State{}, fmt.Errorf("статистика привязана не к итоговому ответу")
+				return State{}, fmt.Errorf("статистика или отметки памяти привязаны не к итоговому ответу")
 			}
 		}
 		for _, usage := range []*llm.Usage{message.Usage, message.TotalUsage} {
@@ -99,7 +87,6 @@ func (s *JSONStore) Load() (State, error) {
 }
 
 func (s *JSONStore) Save(state State) error {
-	state.Version = 1
 	if state.Messages == nil {
 		state.Messages = []Message{}
 	}

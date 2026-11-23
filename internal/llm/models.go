@@ -1,5 +1,7 @@
 package llm
 
+import "llm-console/internal/memory"
+
 // Message is a provider-neutral chat message.
 type Message struct {
 	Role             string     `json:"role"`
@@ -16,6 +18,11 @@ type Usage struct {
 }
 
 type Result struct {
+	Memory      *memory.Update
+	MemorySaved *memory.SavedLayers
+	// LogInvalidResponse records the original HTTP response if a higher layer
+	// rejects the answer format. It does not send another request.
+	LogInvalidResponse func()
 	// Messages contains all generated messages, including tool interactions.
 	Messages []Message
 	Content  string

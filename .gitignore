@@ -4,3 +4,11 @@ config.json
 # Local conversation and temporary history writes.
 history.json
 .history-*.tmp
+
+# Task progress and durable memory.
+working-memory.json
+long-term-memory.json
+.memory-*.tmp
+
+# Problematic API responses used for diagnostics.
+api-responses.jsonl

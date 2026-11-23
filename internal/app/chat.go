@@ -8,6 +8,7 @@ import (
 
 	"llm-console/internal/history"
 	"llm-console/internal/llm"
+	"llm-console/internal/memory"
 )
 
 type HistoryStore interface {
@@ -20,18 +21,18 @@ type HistoryStore interface {
 type ChatService struct {
 	client        llm.Client
 	summaryClient llm.Client
-	factsClient   llm.Client
 	summary       *history.Summary
 	messages      []history.Message
 	usage         *llm.Usage
 	store         HistoryStore
-	strategy      ContextStrategy
-	facts         map[string]string
-	factsCount    int
+	working       memory.State
+	longTerm      memory.State
+	workingStore  MemoryStore
+	longTermStore MemoryStore
 }
 
 func NewChatService(client llm.Client) *ChatService {
-	return &ChatService{client: client, strategy: StrategySummary}
+	return &ChatService{client: client}
 }
 
 func NewChatServiceWithHistory(client llm.Client, store HistoryStore) (*ChatService, error) {
@@ -39,8 +40,7 @@ func NewChatServiceWithHistory(client llm.Client, store HistoryStore) (*ChatServ
 	if err != nil {
 		return nil, err
 	}
-	return &ChatService{client: client, messages: state.Messages, summary: state.Summary, usage: state.Usage, store: store,
-		strategy: StrategySummary, facts: state.Facts, factsCount: state.FactsMessageCount}, nil
+	return &ChatService{client: client, messages: state.Messages, summary: state.Summary, usage: state.Usage, store: store}, nil
 }
 
 func (s *ChatService) TotalUsage() *llm.Usage {
@@ -60,17 +60,17 @@ func (s *ChatService) History() history.State {
 	for i := range messages {
 		messages[i].Usage = copyUsage(messages[i].Usage)
 		messages[i].TotalUsage = copyUsage(messages[i].TotalUsage)
+		if messages[i].MemorySaved != nil {
+			saved := *messages[i].MemorySaved
+			messages[i].MemorySaved = &saved
+		}
 	}
 	var summary *history.Summary
 	if s.summary != nil {
 		value := *s.summary
 		summary = &value
 	}
-	facts := make(map[string]string, len(s.facts))
-	for key, value := range s.facts {
-		facts[key] = value
-	}
-	return history.State{Version: 1, Messages: messages, Summary: summary, Usage: s.TotalUsage(), Facts: facts, FactsMessageCount: s.factsCount}
+	return history.State{Messages: messages, Summary: summary, Usage: s.TotalUsage()}
 }
 
 func copyUsage(usage *llm.Usage) *llm.Usage {
@@ -89,8 +89,6 @@ func (s *ChatService) Clear() error {
 	}
 	s.messages = nil
 	s.summary = nil
-	s.facts = nil
-	s.factsCount = 0
 	s.usage = nil
 	return nil
 }
@@ -100,15 +98,11 @@ func (s *ChatService) Ask(ctx context.Context, prompt string) (llm.Result, error
 	if prompt == "" {
 		return llm.Result{}, fmt.Errorf("prompt must not be empty")
 	}
-	if err := s.prepareContext(ctx); err != nil {
+	if err := s.summarize(ctx); err != nil {
 		return llm.Result{}, errors.Join(err, s.save())
 	}
-	var messages []llm.Message
-	if s.strategy == StrategySummary {
-		messages = append(s.contextMessages(), llm.Message{Role: "user", Content: prompt})
-	} else {
-		messages = s.windowMessages(prompt)
-	}
+	messages := append(s.contextMessages(), llm.Message{Role: "user", Content: prompt})
+	messages = append(s.memoryMessages(), messages...)
 	result, askErr := s.client.Complete(ctx, messages)
 	s.addUsage(result.Usage)
 	if askErr == nil {
@@ -120,10 +114,12 @@ func (s *ChatService) Ask(ctx context.Context, prompt string) (llm.Result, error
 		} else {
 			s.messages = append(s.messages, history.Message{Message: llm.Message{Role: "assistant", Content: result.Content}})
 		}
-		if s.strategy == StrategyStickyFacts {
-			askErr = s.updateFacts(ctx)
-		}
+		result.MemorySaved, askErr = s.applyMemoryUpdates(result.Memory)
 		last := &s.messages[len(s.messages)-1]
+		if result.MemorySaved != nil {
+			saved := *result.MemorySaved
+			last.MemorySaved = &saved
+		}
 		last.Usage = copyUsage(result.Usage)
 		last.TotalUsage = s.TotalUsage()
 	}
@@ -137,11 +133,6 @@ func (s *ChatService) Ask(ctx context.Context, prompt string) (llm.Result, error
 // SetSummaryClient allows summarization without tools or response-format constraints.
 func (s *ChatService) SetSummaryClient(client llm.Client) {
 	s.summaryClient = client
-}
-
-// SetFactsClient configures structured memory updates independently of summaries.
-func (s *ChatService) SetFactsClient(client llm.Client) {
-	s.factsClient = client
 }
 
 func (s *ChatService) contextMessages() []llm.Message {

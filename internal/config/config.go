@@ -26,17 +26,32 @@ func Load(path string) (Config, error) {
 		return Config{}, err
 	}
 	normalize(&cfg)
-	switch cfg.ContextStrategy {
-	case "summary", "sliding_window", "sticky_facts":
-	default:
-		return Config{}, fmt.Errorf("context_strategy должен быть summary, sliding_window или sticky_facts")
+	paths := []*string{&cfg.HistoryPath, &cfg.WorkingMemoryPath, &cfg.LongTermMemoryPath, &cfg.APIResponseLogPath}
+	defaults := []string{"history.json", "working-memory.json", "long-term-memory.json", "api-responses.jsonl"}
+	configPath, err := filepath.Abs(path)
+	if err != nil {
+		return Config{}, fmt.Errorf("путь конфигурации: %w", err)
 	}
-	cfg.HistoryPath = strings.TrimSpace(cfg.HistoryPath)
-	if cfg.HistoryPath == "" {
-		cfg.HistoryPath = "history.json"
-	}
-	if !filepath.IsAbs(cfg.HistoryPath) {
-		cfg.HistoryPath = filepath.Join(filepath.Dir(path), cfg.HistoryPath)
+	seen := map[string]bool{configPath: true}
+	for i, target := range paths {
+		*target = strings.TrimSpace(*target)
+		if target == &cfg.APIResponseLogPath && *target == "-" {
+			continue
+		}
+		if *target == "" {
+			*target = defaults[i]
+		}
+		if !filepath.IsAbs(*target) {
+			*target = filepath.Join(filepath.Dir(path), *target)
+		}
+		absolute, err := filepath.Abs(*target)
+		if err != nil {
+			return Config{}, fmt.Errorf("путь хранилища: %w", err)
+		}
+		if seen[absolute] {
+			return Config{}, fmt.Errorf("конфигурация, история, рабочая память, долговременная память и лог API должны храниться в разных файлах")
+		}
+		seen[absolute] = true
 	}
 	if cfg.APIKey == "" {
 		return Config{}, fmt.Errorf("задайте api_key в %s", path)
@@ -49,15 +64,6 @@ func Load(path string) (Config, error) {
 	}
 	if cfg.Thinking != "" && cfg.Thinking != "enabled" && cfg.Thinking != "disabled" {
 		return Config{}, fmt.Errorf("thinking должен быть enabled или disabled")
-	}
-	if len(cfg.ResponseSchema) > 0 {
-		if !json.Valid(cfg.ResponseSchema) {
-			return Config{}, fmt.Errorf("response_schema должен содержать корректный JSON")
-		}
-		var schema map[string]json.RawMessage
-		if err := json.Unmarshal(cfg.ResponseSchema, &schema); err != nil || schema == nil {
-			return Config{}, fmt.Errorf("response_schema должен быть JSON-объектом")
-		}
 	}
 	return cfg, nil
 }
@@ -78,22 +84,11 @@ func readFile(path string) (Config, error) {
 }
 
 func normalize(cfg *Config) {
-	cfg.ContextStrategy = strings.TrimSpace(cfg.ContextStrategy)
-	if cfg.ContextStrategy == "" {
-		cfg.ContextStrategy = "summary"
-	}
 	cfg.APIKey = strings.TrimSpace(cfg.APIKey)
 	cfg.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
 	cfg.Model = strings.TrimSpace(cfg.Model)
 	cfg.ReasoningEffort = strings.TrimSpace(cfg.ReasoningEffort)
 	cfg.Thinking = strings.TrimSpace(cfg.Thinking)
-	stopSequences := cfg.StopSequences[:0]
-	for _, sequence := range cfg.StopSequences {
-		if sequence = strings.TrimSpace(sequence); sequence != "" {
-			stopSequences = append(stopSequences, sequence)
-		}
-	}
-	cfg.StopSequences = stopSequences
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = defaultBaseURL
 	}

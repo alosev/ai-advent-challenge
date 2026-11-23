@@ -11,23 +11,20 @@ type completionRequest struct {
 	Temperature     *float64           `json:"temperature,omitempty"`
 	Thinking        *thinkingOption    `json:"thinking,omitempty"`
 	ReasoningEffort string             `json:"reasoning_effort,omitempty"`
-	StopSequences   []string           `json:"stop,omitempty"`
-	ResponseFormat  *responseFormat    `json:"response_format,omitempty"`
+	ToolChoice      string             `json:"tool_choice,omitempty"`
 }
 
 type completionResponse struct {
-	Usage   *Usage             `json:"usage"`
-	Choices []completionChoice `json:"choices"`
+	diagnostic ResponseRecord
+	Usage      *Usage             `json:"usage"`
+	Choices    []completionChoice `json:"choices"`
 }
 
 type completionChoice struct {
-	Message Message `json:"message"`
+	Message      Message `json:"message"`
+	FinishReason string  `json:"finish_reason"`
 }
 
 type thinkingOption struct {
-	Type string `json:"type"`
-}
-
-type responseFormat struct {
 	Type string `json:"type"`
 }

@@ -11,6 +11,7 @@ import (
 	"llm-console/internal/config"
 	"llm-console/internal/history"
 	"llm-console/internal/llm"
+	"llm-console/internal/memory"
 )
 
 func main() {
@@ -34,24 +35,32 @@ func run(args []string) error {
 	}
 
 	options := llm.CompletionOptions{
+		FinalTool:       app.SubmitResponseTool(),
 		MaxTokens:       cfg.MaxTokens,
 		Temperature:     cfg.Temperature,
 		Thinking:        cfg.Thinking,
 		ReasoningEffort: cfg.ReasoningEffort,
-		StopSequences:   cfg.StopSequences,
-	}
-	if len(cfg.ResponseSchema) > 0 {
-		options.ResponseSchema = &llm.ResponseSchema{Schema: cfg.ResponseSchema}
 	}
 	client := llm.NewOpenAICompatibleClient(cfg.BaseURL, cfg.APIKey, cfg.Model, cfg.Timeout, options)
-	chat, err := app.NewChatServiceWithHistory(client, history.NewJSONStore(cfg.HistoryPath))
+	if cfg.APIResponseLogPath != "-" {
+		logger, err := llm.NewResponseLogger(cfg.APIResponseLogPath)
+		if err != nil {
+			return fmt.Errorf("ошибка открытия лога API: %w", err)
+		}
+		defer logger.Close()
+		client.SetResponseObserver(func(record llm.ResponseRecord) {
+			if err := logger.Write(record); err != nil {
+				fmt.Fprintln(os.Stderr, "Не удалось записать ответ в лог API:", err)
+			}
+		})
+	}
+	chat, err := app.NewChatServiceWithHistory(app.NewMemoryClient(client), history.NewJSONStore(cfg.HistoryPath))
 	if err != nil {
 		return fmt.Errorf("ошибка загрузки истории (файл оставлен без изменений): %w", err)
 	}
 	chat.SetSummaryClient(client.SummaryClient())
-	chat.SetFactsClient(client.FactsClient())
-	if err := chat.SetContextStrategy(app.ContextStrategy(cfg.ContextStrategy)); err != nil {
-		return err
+	if err := chat.SetMemoryStores(memory.NewJSONStore(cfg.WorkingMemoryPath), memory.NewJSONStore(cfg.LongTermMemoryPath)); err != nil {
+		return fmt.Errorf("ошибка загрузки памяти (файлы оставлены без изменений): %w", err)
 	}
 	ui := newConsole(os.Stdout)
 	ui.observeTools(client)

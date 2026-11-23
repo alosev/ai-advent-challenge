@@ -8,18 +8,16 @@ import (
 	"os"
 	"strings"
 
-	"llm-console/internal/app"
 	"llm-console/internal/history"
 	"llm-console/internal/llm"
 )
 
 type asker interface {
 	Ask(context.Context, string) (llm.Result, error)
+	MemoryCommand(string) (string, error)
 	Clear() error
 	TotalUsage() *llm.Usage
 	History() history.State
-	ContextStrategy() app.ContextStrategy
-	SetContextStrategy(app.ContextStrategy) error
 }
 
 type console struct {
@@ -56,7 +54,7 @@ func (c console) history(state history.State) {
 			fmt.Fprintf(c.out, "> %s\n", message.Content)
 		case "assistant":
 			if len(message.ToolCalls) == 0 {
-				c.answer(llm.Result{Content: message.Content, Usage: message.Usage})
+				c.answer(llm.Result{Content: message.Content, Usage: message.Usage, MemorySaved: message.MemorySaved})
 				c.totalUsage(message.TotalUsage)
 				displayedTotal = message.TotalUsage
 				fmt.Fprintln(c.out)
@@ -104,6 +102,15 @@ func (c console) block(label, content, color string) {
 
 func (c console) answer(result llm.Result) {
 	c.block("АССИСТЕНТ", result.Content, "1;32")
+	if saved := result.MemorySaved; saved != nil && (saved.Working || saved.LongTerm) {
+		fmt.Fprintln(c.out)
+		if saved.Working {
+			fmt.Fprintln(c.out, "📝 Рабочая память обновлена")
+		}
+		if saved.LongTerm {
+			fmt.Fprintln(c.out, "🧠 Долговременная память обновлена")
+		}
+	}
 	c.usage(result.Usage)
 }
 
@@ -136,7 +143,7 @@ func (c console) usageLine(label string, usage *llm.Usage) {
 func runChat(ctx context.Context, in io.Reader, ui console, chat asker) error {
 	reader := bufio.NewReader(in)
 	fmt.Fprintln(ui.out, "Диалог · Enter — отправить · /multi — многострочный ввод · /clear — очистить историю · /exit — выход")
-	fmt.Fprintln(ui.out, "История сохраняется автоматически и загружается при запуске.")
+	fmt.Fprintln(ui.out, "Диалог и память обновляются автоматически. /memory — просмотр и ручное редактирование памяти.")
 	ui.history(chat.History())
 	for {
 		ui.heading("ВЫ", "1;36")
@@ -149,18 +156,12 @@ func runChat(ctx context.Context, in io.Reader, ui console, chat asker) error {
 		if prompt == "/exit" || prompt == "/quit" {
 			return nil
 		}
-		if fields := strings.Fields(prompt); len(fields) > 0 && fields[0] == "/strategy" {
-			switch len(fields) {
-			case 1:
-				ui.block("СТРАТЕГИЯ КОНТЕКСТА", string(chat.ContextStrategy())+"\nДоступны: summary, sliding_window, sticky_facts. Переключение: /strategy <имя>", "34")
-			case 2:
-				if strategyErr := chat.SetContextStrategy(app.ContextStrategy(fields[1])); strategyErr != nil {
-					ui.block("ОШИБКА", strategyErr.Error(), "1;31")
-				} else {
-					ui.block("СТРАТЕГИЯ КОНТЕКСТА", string(chat.ContextStrategy()), "34")
-				}
-			default:
-				ui.block("ОШИБКА", "Используйте /strategy <summary|sliding_window|sticky_facts>", "1;31")
+		if fields := strings.Fields(prompt); len(fields) > 0 && fields[0] == "/memory" {
+			output, memoryErr := chat.MemoryCommand(prompt)
+			if memoryErr != nil {
+				ui.block("ОШИБКА ПАМЯТИ", memoryErr.Error(), "1;31")
+			} else {
+				ui.block("ПАМЯТЬ", output, "34")
 			}
 			if err == io.EOF {
 				return nil
@@ -171,7 +172,7 @@ func runChat(ctx context.Context, in io.Reader, ui console, chat asker) error {
 			if err := chat.Clear(); err != nil {
 				ui.block("ОШИБКА ОЧИСТКИ", err.Error(), "1;31")
 			} else {
-				ui.block("ИСТОРИЯ ОЧИЩЕНА", "Переписка удалена, контекст и счётчик токенов сброшены.", "34")
+				ui.block("ИСТОРИЯ ОЧИЩЕНА", "Переписка и саммари удалены, счётчик токенов сброшен. Рабочая и долговременная память сохранены.", "34")
 			}
 			if err == io.EOF {
 				return nil
