@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"llm-console/internal/profile"
 )
 
 const (
@@ -26,6 +28,10 @@ func Load(path string) (Config, error) {
 		return Config{}, err
 	}
 	normalize(&cfg)
+	cfg.Profiles, cfg.ActiveProfile, err = profile.Normalize(cfg.Profiles, cfg.ActiveProfile)
+	if err != nil {
+		return Config{}, err
+	}
 	paths := []*string{&cfg.HistoryPath, &cfg.WorkingMemoryPath, &cfg.LongTermMemoryPath, &cfg.APIResponseLogPath}
 	defaults := []string{"history.json", "working-memory.json", "long-term-memory.json", "api-responses.jsonl"}
 	configPath, err := filepath.Abs(path)

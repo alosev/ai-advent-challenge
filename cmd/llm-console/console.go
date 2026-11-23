@@ -15,6 +15,7 @@ import (
 type asker interface {
 	Ask(context.Context, string) (llm.Result, error)
 	MemoryCommand(string) (string, error)
+	ProfileCommand(string) (string, error)
 	Clear() error
 	TotalUsage() *llm.Usage
 	History() history.State
@@ -144,6 +145,11 @@ func runChat(ctx context.Context, in io.Reader, ui console, chat asker) error {
 	reader := bufio.NewReader(in)
 	fmt.Fprintln(ui.out, "Диалог · Enter — отправить · /multi — многострочный ввод · /clear — очистить историю · /exit — выход")
 	fmt.Fprintln(ui.out, "Диалог и память обновляются автоматически. /memory — просмотр и ручное редактирование памяти.")
+	fmt.Fprintln(ui.out, "/profile — активный профиль · /profile list — список · /profile use <имя> — переключить")
+	profileOutput, profileErr := chat.ProfileCommand("/profile")
+	if profileErr == nil {
+		ui.block("ПРОФИЛЬ", profileOutput, "34")
+	}
 	ui.history(chat.History())
 	for {
 		ui.heading("ВЫ", "1;36")
@@ -155,6 +161,18 @@ func runChat(ctx context.Context, in io.Reader, ui console, chat asker) error {
 		prompt := strings.TrimSpace(line)
 		if prompt == "/exit" || prompt == "/quit" {
 			return nil
+		}
+		if fields := strings.Fields(prompt); len(fields) > 0 && fields[0] == "/profile" {
+			output, profileErr := chat.ProfileCommand(prompt)
+			if profileErr != nil {
+				ui.block("ОШИБКА ПРОФИЛЯ", profileErr.Error(), "1;31")
+			} else {
+				ui.block("ПРОФИЛЬ", output, "34")
+			}
+			if err == io.EOF {
+				return nil
+			}
+			continue
 		}
 		if fields := strings.Fields(prompt); len(fields) > 0 && fields[0] == "/memory" {
 			output, memoryErr := chat.MemoryCommand(prompt)

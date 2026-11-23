@@ -59,6 +59,9 @@ func run(args []string) error {
 		return fmt.Errorf("ошибка загрузки истории (файл оставлен без изменений): %w", err)
 	}
 	chat.SetSummaryClient(client.SummaryClient())
+	if err := chat.SetProfiles(cfg.Profiles, cfg.ActiveProfile); err != nil {
+		return fmt.Errorf("ошибка профилей: %w", err)
+	}
 	if err := chat.SetMemoryStores(memory.NewJSONStore(cfg.WorkingMemoryPath), memory.NewJSONStore(cfg.LongTermMemoryPath)); err != nil {
 		return fmt.Errorf("ошибка загрузки памяти (файлы оставлены без изменений): %w", err)
 	}
