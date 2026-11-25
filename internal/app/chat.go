@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"llm-console/internal/history"
+	"llm-console/internal/invariants"
 	"llm-console/internal/llm"
 	"llm-console/internal/memory"
 	"llm-console/internal/profile"
@@ -21,6 +22,7 @@ type HistoryStore interface {
 
 // ChatService owns conversation state independently of its user interface.
 type ChatService struct {
+	invariants    *invariants.Store
 	client        llm.Client
 	summaryClient llm.Client
 	summary       *history.Summary
@@ -208,4 +210,15 @@ func (s *ChatService) save() error {
 		return fmt.Errorf("не удалось сохранить историю; текущий контекст остался в памяти: %w", err)
 	}
 	return nil
+}
+
+func (s *ChatService) SetInvariants(store *invariants.Store) {
+	s.invariants = store
+	s.setWorkflowInvariantGuard()
+}
+func (s *ChatService) InvariantCommand(command string) (string, error) {
+	if s.invariants == nil {
+		return "", fmt.Errorf("хранилище инвариантов не подключено")
+	}
+	return s.invariants.Command(command)
 }

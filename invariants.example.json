@@ -1,0 +1,9 @@
+{
+  "rules": {
+    "working_hours": {
+      "start": "10:00",
+      "end": "19:00"
+    }
+  },
+  "changes": []
+}

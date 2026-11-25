@@ -9,6 +9,7 @@ import (
 	"llm-console/internal/app"
 	"llm-console/internal/config"
 	"llm-console/internal/history"
+	"llm-console/internal/invariants"
 	"llm-console/internal/llm"
 	"llm-console/internal/memory"
 	"llm-console/internal/tools"
@@ -40,8 +41,16 @@ func loadSession(configPath string, ui console) (*agentSession, error) {
 		return nil, fmt.Errorf("ошибка конфигурации: %w", err)
 	}
 
+	rules, err := invariants.Open(filepath.Join(filepath.Dir(configPath), "invariants.json"))
+	if err != nil {
+		return nil, fmt.Errorf("ошибка загрузки инвариантов: %w", err)
+	}
+	finalTool := app.SubmitResponseTool()
+	if rules.Rules() != nil {
+		finalTool = app.BarbershopSubmitResponseTool()
+	}
 	options := llm.CompletionOptions{
-		FinalTool:       app.SubmitResponseTool(),
+		FinalTool:       finalTool,
 		MaxTokens:       cfg.MaxTokens,
 		Temperature:     cfg.Temperature,
 		Thinking:        cfg.Thinking,
@@ -60,10 +69,11 @@ func loadSession(configPath string, ui console) (*agentSession, error) {
 			}
 		})
 	}
-	chat, err := app.NewChatServiceWithHistory(app.NewMemoryClient(client), history.NewJSONStore(cfg.HistoryPath))
+	chat, err := app.NewChatServiceWithHistory(app.NewInvariantMemoryClient(client, rules), history.NewJSONStore(cfg.HistoryPath))
 	if err != nil {
 		return nil, fmt.Errorf("ошибка загрузки истории (файл оставлен без изменений): %w", err)
 	}
+	chat.SetInvariants(rules)
 	chat.SetSummaryClient(client.SummaryClient())
 	if err := chat.SetProfile(cfg.Profile); err != nil {
 		return nil, fmt.Errorf("ошибка профилей: %w", err)

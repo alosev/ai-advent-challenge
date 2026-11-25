@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -116,6 +117,19 @@ func (c *OpenAICompatibleClient) Complete(ctx context.Context, messages []Messag
 				// final answer must use results already available to the model.
 				if len(message.ToolCalls) != 1 || call.Type != "function" || call.ID == "" {
 					return c.protocolError(response, total, "invalid_final_tool", fmt.Errorf("%s должен быть единственным вызовом в ответе, с типом function и непустым ID", final.Function.Name))
+				}
+				// An HTTP response can be complete while its function arguments
+				// are truncated, even with finish_reason=tool_calls.
+				var arguments json.RawMessage
+				decoder := json.NewDecoder(strings.NewReader(call.Function.Arguments))
+				if err := decoder.Decode(&arguments); err != nil {
+					if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
+						return c.protocolError(response, total, "incomplete_final_arguments", fmt.Errorf("API вернул незавершённый JSON аргументов %s (finish_reason=%s); ответ не выдан, память не изменена; повторный запрос не выполнялся", final.Function.Name, choice.FinishReason))
+					}
+					return c.protocolError(response, total, "invalid_final_arguments", fmt.Errorf("API вернул некорректный JSON аргументов %s: %w; память не изменена", final.Function.Name, err))
+				}
+				if err := decoder.Decode(new(any)); err != io.EOF {
+					return c.protocolError(response, total, "invalid_final_arguments", fmt.Errorf("API вернул лишние данные после JSON аргументов %s; память не изменена", final.Function.Name))
 				}
 				// Consume the terminal call locally. No tool result or additional
 				// request is needed, and no unmatched call enters chat history.

@@ -20,3 +20,7 @@ agents/
 
 .idea
 .DS_Store
+
+# Agent business rules and their local change journal.
+invariants.json
+.invariants-*.tmp

@@ -158,9 +158,10 @@ type Store interface {
 }
 
 type Machine struct {
-	definitions map[string]Definition
-	state       *State
-	store       Store
+	definitions     map[string]Definition
+	state           *State
+	store           Store
+	transitionGuard func(State, bool) error
 }
 
 func New(definitions map[string]Definition, store Store) (*Machine, error) {
@@ -262,6 +263,13 @@ func contains(values []string, value string) bool {
 	return false
 }
 
+// SetTransitionGuard installs an application policy checked before saving Apply.
+// The bool reports whether the candidate is at the workflow's initial step.
+// The guard receives an owned snapshot and cannot mutate machine state.
+func (m *Machine) SetTransitionGuard(guard func(State, bool) error) {
+	m.transitionGuard = guard
+}
+
 // Apply validates the actor, edge and data before persisting any change.
 func (m *Machine) Apply(actor, action string, fields map[string]string) error {
 	if !m.Active() {
@@ -288,6 +296,12 @@ func (m *Machine) Apply(actor, action string, fields map[string]string) error {
 		}
 	}
 	next.Step = t.To
+	if m.transitionGuard != nil {
+		initial := next.Step == m.definitions[next.Workflow].Initial
+		if err := m.transitionGuard(*next.clone(), initial); err != nil {
+			return fmt.Errorf("переход заблокирован, задача не изменена: %w", err)
+		}
+	}
 	return m.commit(next)
 }
 

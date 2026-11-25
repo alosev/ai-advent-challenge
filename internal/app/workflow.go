@@ -20,7 +20,10 @@ const taskHelp = `Задача активируется настройками �
 Выполненная задача остаётся для просмотра до старта новой или отмены.
 /clear очищает диалог, но сохраняет задачу.`
 
-func (s *ChatService) SetWorkflow(machine *workflow.Machine) { s.workflow = machine }
+func (s *ChatService) SetWorkflow(machine *workflow.Machine) {
+	s.workflow = machine
+	s.setWorkflowInvariantGuard()
+}
 
 func (s *ChatService) TaskCommand(command string) (string, error) {
 	if s.workflow == nil {
