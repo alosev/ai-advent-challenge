@@ -12,3 +12,6 @@ long-term-memory.json
 
 # Problematic API responses used for diagnostics.
 api-responses.jsonl
+
+# Isolated local agent directories (settings, credentials and context).
+agents/

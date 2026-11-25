@@ -30,8 +30,7 @@ type ChatService struct {
 	longTerm      memory.State
 	workingStore  MemoryStore
 	longTermStore MemoryStore
-	profiles      []profile.Profile
-	activeProfile string
+	profile       *profile.Profile
 }
 
 func NewChatService(client llm.Client) *ChatService {

@@ -16,6 +16,7 @@ type asker interface {
 	Ask(context.Context, string) (llm.Result, error)
 	MemoryCommand(string) (string, error)
 	ProfileCommand(string) (string, error)
+	AgentCommand(string) (string, error)
 	Clear() error
 	TotalUsage() *llm.Usage
 	History() history.State
@@ -145,7 +146,9 @@ func runChat(ctx context.Context, in io.Reader, ui console, chat asker) error {
 	reader := bufio.NewReader(in)
 	fmt.Fprintln(ui.out, "Диалог · Enter — отправить · /multi — многострочный ввод · /clear — очистить историю · /exit — выход")
 	fmt.Fprintln(ui.out, "Диалог и память обновляются автоматически. /memory — просмотр и ручное редактирование памяти.")
-	fmt.Fprintln(ui.out, "/profile — активный профиль · /profile list — список · /profile use <имя> — переключить")
+	fmt.Fprintln(ui.out, "/agent — текущий агент · /agent <директория> — переключить · /profile — профиль агента")
+	agentOutput, _ := chat.AgentCommand("/agent")
+	ui.block("АГЕНТ", agentOutput, "34")
 	profileOutput, profileErr := chat.ProfileCommand("/profile")
 	if profileErr == nil {
 		ui.block("ПРОФИЛЬ", profileOutput, "34")
@@ -161,6 +164,21 @@ func runChat(ctx context.Context, in io.Reader, ui console, chat asker) error {
 		prompt := strings.TrimSpace(line)
 		if prompt == "/exit" || prompt == "/quit" {
 			return nil
+		}
+		if fields := strings.Fields(prompt); len(fields) > 0 && fields[0] == "/agent" {
+			output, switchErr := chat.AgentCommand(prompt)
+			if switchErr != nil {
+				ui.block("ОШИБКА ПЕРЕКЛЮЧЕНИЯ", switchErr.Error(), "1;31")
+			} else {
+				ui.block("АГЕНТ", output, "34")
+				profileOutput, _ := chat.ProfileCommand("/profile")
+				ui.block("ПРОФИЛЬ", profileOutput, "34")
+				ui.history(chat.History())
+			}
+			if err == io.EOF {
+				return nil
+			}
+			continue
 		}
 		if fields := strings.Fields(prompt); len(fields) > 0 && fields[0] == "/profile" {
 			output, profileErr := chat.ProfileCommand(prompt)

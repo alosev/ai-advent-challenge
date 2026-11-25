@@ -11,28 +11,18 @@ type Profile struct {
 	Description string `json:"description"`
 }
 
-// Normalize validates a copy so callers never retain partially checked profiles.
-func Normalize(profiles []Profile, active string) ([]Profile, string, error) {
-	result := append([]Profile(nil), profiles...)
-	seen := make(map[string]bool, len(result))
-	for i := range result {
-		p := &result[i]
-		p.Name = strings.TrimSpace(p.Name)
-		p.Description = strings.TrimSpace(p.Description)
-		if p.Name == "" || strings.ContainsAny(p.Name, " \t\r\n") || len(strings.Fields(p.Name)) != 1 {
-			return nil, "", fmt.Errorf("имя профиля должно быть непустым и без пробелов")
-		}
-		if p.Description == "" {
-			return nil, "", fmt.Errorf("у профиля %q должно быть непустое описание", p.Name)
-		}
-		if seen[p.Name] {
-			return nil, "", fmt.Errorf("имя профиля %q повторяется", p.Name)
-		}
-		seen[p.Name] = true
+func Normalize(value *Profile) (*Profile, error) {
+	if value == nil {
+		return nil, nil
 	}
-	active = strings.TrimSpace(active)
-	if active != "" && !seen[active] {
-		return nil, "", fmt.Errorf("активный профиль %q отсутствует в profiles", active)
+	result := *value
+	result.Name = strings.TrimSpace(result.Name)
+	result.Description = strings.TrimSpace(result.Description)
+	if result.Name == "" || len(strings.Fields(result.Name)) != 1 {
+		return nil, fmt.Errorf("имя профиля должно быть непустым и без пробелов")
 	}
-	return result, active, nil
+	if result.Description == "" {
+		return nil, fmt.Errorf("у профиля %q должно быть непустое описание", result.Name)
+	}
+	return &result, nil
 }

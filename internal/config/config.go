@@ -28,7 +28,7 @@ func Load(path string) (Config, error) {
 		return Config{}, err
 	}
 	normalize(&cfg)
-	cfg.Profiles, cfg.ActiveProfile, err = profile.Normalize(cfg.Profiles, cfg.ActiveProfile)
+	cfg.Profile, err = profile.Normalize(cfg.Profile)
 	if err != nil {
 		return Config{}, err
 	}
@@ -57,6 +57,11 @@ func Load(path string) (Config, error) {
 		if seen[absolute] {
 			return Config{}, fmt.Errorf("конфигурация, история, рабочая память, долговременная память и лог API должны храниться в разных файлах")
 		}
+		relative, err := filepath.Rel(filepath.Dir(configPath), absolute)
+		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return Config{}, fmt.Errorf("файлы агента должны находиться в каталоге конфигурации")
+		}
+		*target = absolute
 		seen[absolute] = true
 	}
 	if cfg.APIKey == "" {
@@ -76,9 +81,6 @@ func Load(path string) (Config, error) {
 
 func readFile(path string) (Config, error) {
 	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return Config{}, nil
-	}
 	if err != nil {
 		return Config{}, fmt.Errorf("прочитать конфигурацию %s: %w", path, err)
 	}
