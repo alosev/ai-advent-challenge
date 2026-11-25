@@ -6,6 +6,8 @@
   "history_path": "history.json",
   "working_memory_path": "working-memory.json",
   "long_term_memory_path": "long-term-memory.json",
+  "task_path": "task.json",
+  "workflows": {},
   "api_response_log_path": "api-responses.jsonl",
   "max_tokens": 2048,
   "temperature": 1.0,

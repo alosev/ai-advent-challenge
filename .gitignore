@@ -9,9 +9,14 @@ history.json
 working-memory.json
 long-term-memory.json
 .memory-*.tmp
+task.json
+.task-*.tmp
 
 # Problematic API responses used for diagnostics.
 api-responses.jsonl
 
 # Isolated local agent directories (settings, credentials and context).
 agents/
+
+.idea
+.DS_Store

@@ -1,0 +1,140 @@
+{
+  "api_key": "paste_your_DeepSeek_API_key_here",
+  "base_url": "https://api.deepseek.com",
+  "model": "deepseek-flash",
+  "timeout_seconds": 60,
+  "history_path": "history.json",
+  "working_memory_path": "working-memory.json",
+  "long_term_memory_path": "long-term-memory.json",
+  "task_path": "task.json",
+  "workflows": {
+    "development": {
+      "description": "План, подтверждение пользователя, подготовка решения и ручная валидация",
+      "initial": "prepare_plan",
+      "steps": {
+        "prepare_plan": {
+          "stage": "planning",
+          "expected_action": "Ассистент: подготовить план и передать present_plan",
+          "actions": {
+            "present_plan": {
+              "actor": "assistant",
+              "to": "await_approval",
+              "fields": [
+                "plan"
+              ],
+              "required": [
+                "plan"
+              ]
+            }
+          },
+          "tools": [
+            "text_length"
+          ]
+        },
+        "await_approval": {
+          "stage": "planning",
+          "expected_action": "Пользователь: /approve или /task action revise",
+          "actions": {
+            "approve": {
+              "actor": "user",
+              "to": "implement",
+              "required": [
+                "plan"
+              ]
+            },
+            "revise": {
+              "actor": "user",
+              "to": "prepare_plan",
+              "clear": [
+                "plan",
+                "implementation",
+                "validation_report"
+              ]
+            }
+          }
+        },
+        "implement": {
+          "stage": "execution",
+          "expected_action": "Ассистент: подготовить результат согласно утверждённому плану и передать implement",
+          "actions": {
+            "implement": {
+              "actor": "assistant",
+              "to": "validate",
+              "fields": [
+                "implementation"
+              ],
+              "required": [
+                "plan",
+                "implementation"
+              ]
+            },
+            "revise": {
+              "actor": "user",
+              "to": "prepare_plan",
+              "clear": [
+                "plan",
+                "implementation",
+                "validation_report"
+              ]
+            }
+          },
+          "tools": [
+            "calculate",
+            "text_length"
+          ]
+        },
+        "validate": {
+          "stage": "validation",
+          "expected_action": "Пользователь: проверить результат и передать /task action validate с validation_report; при ошибках /task action rework",
+          "actions": {
+            "validate": {
+              "actor": "user",
+              "to": "completed",
+              "fields": [
+                "validation_report"
+              ],
+              "required": [
+                "implementation",
+                "validation_report"
+              ]
+            },
+            "rework": {
+              "actor": "user",
+              "to": "implement",
+              "clear": [
+                "implementation",
+                "validation_report"
+              ]
+            },
+            "revise": {
+              "actor": "user",
+              "to": "prepare_plan",
+              "clear": [
+                "plan",
+                "implementation",
+                "validation_report"
+              ]
+            }
+          }
+        },
+        "completed": {
+          "stage": "done",
+          "expected_action": "Задача завершена после ручной проверки пользователем",
+          "terminal": true
+        }
+      },
+      "activation": "startup",
+      "task": "Помочь пользователю решить задачу разработки: уточнить требования, согласовать план, подготовить результат и проверить его",
+      "trigger": "Пользователь явно просит решить новую задачу разработки после завершения предыдущей"
+    }
+  },
+  "api_response_log_path": "api-responses.jsonl",
+  "max_tokens": 2048,
+  "temperature": 1.0,
+  "thinking": "disabled",
+  "reasoning_effort": "",
+  "profile": {
+    "name": "developer",
+    "description": "Помогай с разработкой: уточняй требования, составляй план и готовь решение. Отвечай на русском; код и команды допустимы. Не утверждай, что изменил файлы или запустил сборку: инструменты приложения этого не умеют. Используй автомат активной задачи; после подготовки результата предложи пользователю выполнить проверки."
+  }
+}

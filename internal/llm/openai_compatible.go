@@ -15,15 +15,17 @@ import (
 
 // OpenAICompatibleClient supports providers exposing POST /chat/completions.
 type OpenAICompatibleClient struct {
-	disableTools bool
-	baseURL      string
-	apiKey       string
-	model        string
-	options      CompletionOptions
-	httpClient   *http.Client
-	onToolCall   func(ToolCall)
-	onToolResult func(ToolCall, string)
-	onResponse   func(ResponseRecord)
+	disableTools    bool
+	baseURL         string
+	apiKey          string
+	model           string
+	options         CompletionOptions
+	httpClient      *http.Client
+	onToolCall      func(ToolCall)
+	onToolResult    func(ToolCall, string)
+	onResponse      func(ResponseRecord)
+	additionalTools []tools.Definition
+	executeTool     func(context.Context, string, string) (string, error)
 }
 
 func NewOpenAICompatibleClient(baseURL, apiKey, model string, timeout time.Duration, options CompletionOptions) *OpenAICompatibleClient {
@@ -36,14 +38,13 @@ func NewOpenAICompatibleClient(baseURL, apiKey, model string, timeout time.Durat
 	}
 }
 
-// SummaryClient shares transport settings, but uses plain text and no tools.
+// SummaryClient shares only connection settings and the model. Generation
+// options from the main chat are not used for summarization.
 func (c *OpenAICompatibleClient) SummaryClient() Client {
 	return &OpenAICompatibleClient{
 		baseURL: c.baseURL, apiKey: c.apiKey, model: c.model,
 		httpClient: c.httpClient, disableTools: true,
 		onResponse: c.onResponse,
-		options: CompletionOptions{MaxTokens: c.options.MaxTokens, Temperature: c.options.Temperature,
-			Thinking: c.options.Thinking, ReasoningEffort: c.options.ReasoningEffort},
 	}
 }
 
@@ -63,6 +64,13 @@ func (c *OpenAICompatibleClient) SetToolCallObserver(observer func(ToolCall)) {
 // including failures encoded as tool output. Configure before calling Complete.
 func (c *OpenAICompatibleClient) SetToolResultObserver(observer func(ToolCall, string)) {
 	c.onToolResult = observer
+}
+
+// SetToolExecutor installs application tools and a mandatory execution gate.
+// The callback also handles ordinary tools; it is not copied to SummaryClient.
+func (c *OpenAICompatibleClient) SetToolExecutor(additional []tools.Definition, execute func(context.Context, string, string) (string, error)) {
+	c.additionalTools = append([]tools.Definition(nil), additional...)
+	c.executeTool = execute
 }
 
 func (c *OpenAICompatibleClient) Complete(ctx context.Context, messages []Message) (Result, error) {
@@ -138,7 +146,13 @@ func (c *OpenAICompatibleClient) Complete(ctx context.Context, messages []Messag
 			if c.onToolCall != nil {
 				c.onToolCall(call)
 			}
-			output, callErr := tools.Execute(call.Function.Name, call.Function.Arguments)
+			var output string
+			var callErr error
+			if c.executeTool != nil {
+				output, callErr = c.executeTool(ctx, call.Function.Name, call.Function.Arguments)
+			} else {
+				output, callErr = tools.Execute(call.Function.Name, call.Function.Arguments)
+			}
 			if callErr != nil {
 				encoded, _ := json.Marshal(map[string]string{"error": callErr.Error()})
 				output = string(encoded)
@@ -187,15 +201,20 @@ func (c *OpenAICompatibleClient) completeOnce(ctx context.Context, messages []Me
 		}
 	}()
 	definitions := tools.Definitions()
+	definitions = append(definitions, c.additionalTools...)
 	if c.disableTools {
 		definitions = nil
 	}
 	toolChoice := ""
 	thinking, reasoningEffort := c.options.Thinking, c.options.ReasoningEffort
+	if c.disableTools {
+		// Summaries never inherit the main chat's reasoning configuration.
+		thinking, reasoningEffort = "disabled", ""
+	}
 	if c.options.FinalTool != nil && !c.disableTools {
 		definitions = append(definitions, *c.options.FinalTool)
 		toolChoice = "required"
-		// DeepSeek rejects required tool_choice in thinking mode.
+		// Required tool choice is incompatible with thinking mode.
 		thinking, reasoningEffort = "disabled", ""
 	}
 	payload, err := json.Marshal(completionRequest{

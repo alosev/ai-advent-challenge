@@ -17,6 +17,7 @@ type asker interface {
 	MemoryCommand(string) (string, error)
 	ProfileCommand(string) (string, error)
 	AgentCommand(string) (string, error)
+	TaskCommand(string) (string, error)
 	Clear() error
 	TotalUsage() *llm.Usage
 	History() history.State
@@ -147,6 +148,7 @@ func runChat(ctx context.Context, in io.Reader, ui console, chat asker) error {
 	fmt.Fprintln(ui.out, "Диалог · Enter — отправить · /multi — многострочный ввод · /clear — очистить историю · /exit — выход")
 	fmt.Fprintln(ui.out, "Диалог и память обновляются автоматически. /memory — просмотр и ручное редактирование памяти.")
 	fmt.Fprintln(ui.out, "/agent — текущий агент · /agent <директория> — переключить · /profile — профиль агента")
+	fmt.Fprintln(ui.out, "/task — необязательная задача · /task list — процессы · /approve — подтвердить текущий шаг")
 	agentOutput, _ := chat.AgentCommand("/agent")
 	ui.block("АГЕНТ", agentOutput, "34")
 	profileOutput, profileErr := chat.ProfileCommand("/profile")
@@ -164,6 +166,18 @@ func runChat(ctx context.Context, in io.Reader, ui console, chat asker) error {
 		prompt := strings.TrimSpace(line)
 		if prompt == "/exit" || prompt == "/quit" {
 			return nil
+		}
+		if fields := strings.Fields(prompt); len(fields) > 0 && (fields[0] == "/task" || fields[0] == "/approve") {
+			output, taskErr := chat.TaskCommand(prompt)
+			if taskErr != nil {
+				ui.block("ОШИБКА ЗАДАЧИ", taskErr.Error(), "1;31")
+			} else {
+				ui.block("ЗАДАЧА", output, "34")
+			}
+			if err == io.EOF {
+				return nil
+			}
+			continue
 		}
 		if fields := strings.Fields(prompt); len(fields) > 0 && fields[0] == "/agent" {
 			output, switchErr := chat.AgentCommand(prompt)

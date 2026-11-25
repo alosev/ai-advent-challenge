@@ -11,6 +11,8 @@ import (
 	"llm-console/internal/history"
 	"llm-console/internal/llm"
 	"llm-console/internal/memory"
+	"llm-console/internal/tools"
+	"llm-console/internal/workflow"
 )
 
 type agentSession struct {
@@ -69,6 +71,16 @@ func loadSession(configPath string, ui console) (*agentSession, error) {
 	if err := chat.SetMemoryStores(memory.NewJSONStore(cfg.WorkingMemoryPath), memory.NewJSONStore(cfg.LongTermMemoryPath)); err != nil {
 		return nil, fmt.Errorf("ошибка загрузки памяти (файлы оставлены без изменений): %w", err)
 	}
+	machine, err := workflow.New(cfg.Workflows, workflow.NewJSONStore(cfg.TaskPath))
+	if err != nil {
+		return nil, fmt.Errorf("ошибка загрузки задачи (файл оставлен без изменений): %w", err)
+	}
+	chat.SetWorkflow(machine)
+	var additional []tools.Definition
+	if len(cfg.Workflows) > 0 {
+		additional = append(additional, app.TaskStartTool(), app.TaskActionTool())
+	}
+	client.SetToolExecutor(additional, app.WorkflowExecutor(machine))
 	ui.observeTools(client)
 	session.ChatService = chat
 	return session, nil

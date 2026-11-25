@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"llm-console/internal/profile"
+	"llm-console/internal/workflow"
 )
 
 const (
@@ -32,8 +33,11 @@ func Load(path string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	paths := []*string{&cfg.HistoryPath, &cfg.WorkingMemoryPath, &cfg.LongTermMemoryPath, &cfg.APIResponseLogPath}
-	defaults := []string{"history.json", "working-memory.json", "long-term-memory.json", "api-responses.jsonl"}
+	if err := workflow.Validate(cfg.Workflows); err != nil {
+		return Config{}, err
+	}
+	paths := []*string{&cfg.HistoryPath, &cfg.WorkingMemoryPath, &cfg.LongTermMemoryPath, &cfg.APIResponseLogPath, &cfg.TaskPath}
+	defaults := []string{"history.json", "working-memory.json", "long-term-memory.json", "api-responses.jsonl", "task.json"}
 	configPath, err := filepath.Abs(path)
 	if err != nil {
 		return Config{}, fmt.Errorf("путь конфигурации: %w", err)
@@ -55,7 +59,7 @@ func Load(path string) (Config, error) {
 			return Config{}, fmt.Errorf("путь хранилища: %w", err)
 		}
 		if seen[absolute] {
-			return Config{}, fmt.Errorf("конфигурация, история, рабочая память, долговременная память и лог API должны храниться в разных файлах")
+			return Config{}, fmt.Errorf("конфигурация, история, память, задача и лог API должны храниться в разных файлах")
 		}
 		relative, err := filepath.Rel(filepath.Dir(configPath), absolute)
 		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
@@ -95,8 +99,8 @@ func normalize(cfg *Config) {
 	cfg.APIKey = strings.TrimSpace(cfg.APIKey)
 	cfg.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
 	cfg.Model = strings.TrimSpace(cfg.Model)
-	cfg.ReasoningEffort = strings.TrimSpace(cfg.ReasoningEffort)
 	cfg.Thinking = strings.TrimSpace(cfg.Thinking)
+	cfg.ReasoningEffort = strings.TrimSpace(cfg.ReasoningEffort)
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = defaultBaseURL
 	}

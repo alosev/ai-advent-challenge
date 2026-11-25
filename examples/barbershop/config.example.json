@@ -1,0 +1,127 @@
+{
+  "api_key": "paste_your_DeepSeek_API_key_here",
+  "base_url": "https://api.deepseek.com",
+  "model": "deepseek-flash",
+  "timeout_seconds": 60,
+  "history_path": "history.json",
+  "working_memory_path": "working-memory.json",
+  "long_term_memory_path": "long-term-memory.json",
+  "task_path": "task.json",
+  "workflows": {
+    "booking": {
+      "description": "Запись по просьбе пользователя, в том числе после обычной консультации; создание записи подтверждается вручную",
+      "initial": "collect_details",
+      "steps": {
+        "collect_details": {
+          "stage": "booking",
+          "expected_action": "Ассистент: собрать услугу, мастера, дату, время; collect сохраняет часть данных, propose передаёт их на подтверждение",
+          "actions": {
+            "collect": {
+              "actor": "assistant",
+              "to": "collect_details",
+              "fields": [
+                "service",
+                "master",
+                "date",
+                "slot"
+              ]
+            },
+            "propose": {
+              "actor": "assistant",
+              "to": "await_confirmation",
+              "fields": [
+                "service",
+                "master",
+                "date",
+                "slot"
+              ],
+              "required": [
+                "service",
+                "master",
+                "date",
+                "slot"
+              ]
+            }
+          },
+          "tools": [
+            "current_time"
+          ]
+        },
+        "await_confirmation": {
+          "stage": "confirmation",
+          "expected_action": "Пользователь: проверить параметры и вызвать /approve; для изменения /task action revise",
+          "actions": {
+            "approve": {
+              "actor": "user",
+              "to": "register",
+              "required": [
+                "service",
+                "master",
+                "date",
+                "slot"
+              ]
+            },
+            "revise": {
+              "actor": "user",
+              "to": "collect_details",
+              "clear": [
+                "service",
+                "master",
+                "date",
+                "slot",
+                "booking_id"
+              ]
+            }
+          }
+        },
+        "register": {
+          "stage": "registration",
+          "expected_action": "Пользователь: создать запись во внешней системе и передать /task action register с booking_id; это приложение не подключено к системе записи",
+          "actions": {
+            "register": {
+              "actor": "user",
+              "to": "booked",
+              "fields": [
+                "booking_id"
+              ],
+              "required": [
+                "service",
+                "master",
+                "date",
+                "slot",
+                "booking_id"
+              ]
+            },
+            "revise": {
+              "actor": "user",
+              "to": "collect_details",
+              "clear": [
+                "service",
+                "master",
+                "date",
+                "slot",
+                "booking_id"
+              ]
+            }
+          }
+        },
+        "booked": {
+          "stage": "done",
+          "expected_action": "Пользователь подтвердил создание записи во внешней системе",
+          "terminal": true
+        }
+      },
+      "activation": "on_request",
+      "trigger": "Пользователь явно просит записать его. Не запускай по вопросу о возможности записи, обсуждению услуг или предложению ассистента"
+    }
+  },
+  "api_response_log_path": "api-responses.jsonl",
+  "max_tokens": 2048,
+  "temperature": 1.0,
+  "thinking": "disabled",
+  "reasoning_effort": "",
+  "profile": {
+    "name": "barbershop",
+    "description": "Ты администратор барбершопа. Отвечай на русском, консультируй по услугам и помогай подготовить запись, если пользователь этого хочет. Не выдумывай расписание, свободные слоты и подтверждение записи. Внешней системы записи нет: наличие времени и создание записи подтверждаются пользователем вручную. Консультацию веди по этому профилю без отдельной задачи. Когда пользователь просит записать его, запускай booking, в том числе если он просит сначала проконсультировать и затем записать. Используй уже полученные сведения из контекста и уточняй недостающие данные. Не проси пользователя вводить команду запуска задачи."
+  }
+}

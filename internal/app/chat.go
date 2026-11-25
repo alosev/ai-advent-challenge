@@ -10,6 +10,7 @@ import (
 	"llm-console/internal/llm"
 	"llm-console/internal/memory"
 	"llm-console/internal/profile"
+	"llm-console/internal/workflow"
 )
 
 type HistoryStore interface {
@@ -31,6 +32,7 @@ type ChatService struct {
 	workingStore  MemoryStore
 	longTermStore MemoryStore
 	profile       *profile.Profile
+	workflow      *workflow.Machine
 }
 
 func NewChatService(client llm.Client) *ChatService {
@@ -106,6 +108,8 @@ func (s *ChatService) Ask(ctx context.Context, prompt string) (llm.Result, error
 	messages := append(s.contextMessages(), llm.Message{Role: "user", Content: prompt})
 	messages = append(s.memoryMessages(), messages...)
 	messages = append(s.profileMessages(), messages...)
+	messages = append(s.workflowMessages(), messages...)
+	ctx = context.WithValue(ctx, workflowRequestKey{}, &workflowRequest{prompt: prompt})
 	result, askErr := s.client.Complete(ctx, messages)
 	s.addUsage(result.Usage)
 	if askErr == nil {
