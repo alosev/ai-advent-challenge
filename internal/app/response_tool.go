@@ -31,9 +31,13 @@ func submitResponseTool(barbershop bool) *tools.Definition {
 		"status":        map[string]any{"type": "string", "enum": []string{"in_progress", "blocked", "completed"}},
 		"facts":         stringsMap,
 	}, "task", "plan", "current_stage", "status", "facts")
+	factInput := object(map[string]any{
+		"value":   text,
+		"item_id": map[string]any{"type": "string", "minLength": 1, "description": "Устойчивый ID элемента; обязателен для decision.* и history.*, запрещён для одиночных фактов. Исправление использует прежний ID."},
+	}, "value")
 	longTerm := object(map[string]any{
-		"upsert": map[string]any{"type": "object", "additionalProperties": text,
-			"description": "Добавить или заменить факты. Если операция не нужна, поле можно пропустить.", "default": map[string]string{}},
+		"upsert": map[string]any{"type": "object", "additionalProperties": factInput,
+			"description": "Добавить или заменить факты. Если операция не нужна, поле можно пропустить.", "default": map[string]any{}},
 		"delete": map[string]any{"type": "array", "uniqueItems": true, "items": text,
 			"description": "Удалить перечисленные ключи. Если операция не нужна, поле можно пропустить.", "default": []string{}},
 	})
